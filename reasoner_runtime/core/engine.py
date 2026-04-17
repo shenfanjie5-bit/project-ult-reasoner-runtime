@@ -8,8 +8,19 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError as PydanticValidationError
 
-from reasoner_runtime.config.loader import load_provider_profiles
-from reasoner_runtime.config.models import ProviderProfile, ScrubRuleSet
+from reasoner_runtime.callbacks import (
+    build_callback_backends,
+    configure_litellm_callbacks,
+)
+from reasoner_runtime.config.loader import (
+    load_callback_profile,
+    load_provider_profiles,
+)
+from reasoner_runtime.config.models import (
+    CallbackProfile,
+    ProviderProfile,
+    ScrubRuleSet,
+)
 from reasoner_runtime.core.models import ReasonerRequest, StructuredGenerationResult
 from reasoner_runtime.providers import (
     ParseValidationError,
@@ -37,6 +48,8 @@ def generate_structured(
     provider_config_path: Path | None = None,
     client_factory: ClientFactory = build_client,
     scrub_rule_set: ScrubRuleSet | None = None,
+    callback_profile: CallbackProfile | None = None,
+    callback_config_path: Path | None = None,
 ) -> StructuredGenerationResult:
     """Generate structured output through the configured provider boundary.
 
@@ -51,6 +64,8 @@ def generate_structured(
         provider_config_path=provider_config_path,
         client_factory=client_factory,
         scrub_rule_set=scrub_rule_set,
+        callback_profile=callback_profile,
+        callback_config_path=callback_config_path,
     )
     return result
 
@@ -63,6 +78,8 @@ def generate_structured_with_replay(
     *,
     provider_config_path: Path | None = None,
     scrub_rule_set: ScrubRuleSet | None = None,
+    callback_profile: CallbackProfile | None = None,
+    callback_config_path: Path | None = None,
 ) -> tuple[StructuredGenerationResult, ReplayBundle]:
     if schema_registry is None:
         raise TypeError("schema_registry is required")
@@ -74,6 +91,8 @@ def generate_structured_with_replay(
         provider_config_path=provider_config_path,
         client_factory=client_factory,
         scrub_rule_set=scrub_rule_set,
+        callback_profile=callback_profile,
+        callback_config_path=callback_config_path,
     )
 
 
@@ -85,12 +104,18 @@ def _generate_structured_with_replay_impl(
     provider_config_path: Path | None,
     client_factory: ClientFactory,
     scrub_rule_set: ScrubRuleSet | None,
+    callback_profile: CallbackProfile | None,
+    callback_config_path: Path | None,
 ) -> tuple[StructuredGenerationResult, ReplayBundle]:
     normalized_request = _normalize_request(request)
     profiles = _resolve_provider_profiles(
         normalized_request,
         provider_profiles=provider_profiles,
         provider_config_path=provider_config_path,
+    )
+    _configure_runtime_callbacks(
+        callback_profile=callback_profile,
+        callback_config_path=callback_config_path,
     )
 
     scrubbed = scrub_request(
@@ -181,6 +206,26 @@ def _resolve_provider_profiles(
             fallback_priority=0,
         )
     ]
+
+
+def _configure_runtime_callbacks(
+    *,
+    callback_profile: CallbackProfile | None,
+    callback_config_path: Path | None,
+) -> None:
+    if callback_profile is not None and callback_config_path is not None:
+        raise ValueError(
+            "callback_profile and callback_config_path cannot both be provided"
+        )
+
+    resolved_profile = (
+        load_callback_profile(callback_config_path)
+        if callback_config_path is not None
+        else callback_profile
+    )
+    backends = build_callback_backends(resolved_profile)
+    if backends:
+        configure_litellm_callbacks(backends)
 
 
 def _normalize_request(request: ReasonerRequest) -> ReasonerRequest:
