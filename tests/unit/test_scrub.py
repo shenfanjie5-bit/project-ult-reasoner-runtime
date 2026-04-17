@@ -162,6 +162,23 @@ def test_scrub_payload_scrubs_string_dict_keys() -> None:
     assert nested[7] == "kept"
 
 
+def test_scrub_payload_preserves_colliding_sanitized_dict_keys() -> None:
+    payload = {
+        "name Alice": "first",
+        "name Bob": "second",
+    }
+
+    scrubbed = scrub_payload(payload)
+    serialized = json.dumps(scrubbed, ensure_ascii=False)
+
+    assert scrubbed == {
+        "name [REDACTED_NAME]": "first",
+        "name [REDACTED_NAME] [DUPLICATE_KEY_2]": "second",
+    }
+    assert "Alice" not in serialized
+    assert "Bob" not in serialized
+
+
 def test_scrub_request_builds_deterministic_sanitized_input() -> None:
     messages = [
         {"role": "system", "content": "保持结构化输出"},
@@ -211,6 +228,24 @@ def test_scrub_request_scrubs_metadata_keys_before_serialization() -> None:
         "acct [REDACTED_ACCOUNT]"
         in payload["metadata"]["nested"]["[REDACTED_PHONE]"]
     )
+
+
+def test_scrub_request_serializes_all_colliding_sanitized_metadata_keys() -> None:
+    messages = [{"role": "user", "content": "ok"}]
+    metadata = {
+        "name Alice": "first",
+        "name Bob": "second",
+    }
+
+    scrubbed = scrub_request(messages, metadata)
+    payload = json.loads(scrubbed.sanitized_input)
+
+    assert payload["metadata"] == {
+        "name [REDACTED_NAME]": "first",
+        "name [REDACTED_NAME] [DUPLICATE_KEY_2]": "second",
+    }
+    assert "Alice" not in scrubbed.sanitized_input
+    assert "Bob" not in scrubbed.sanitized_input
 
 
 def test_scrub_input_is_sanitized_input_wrapper() -> None:

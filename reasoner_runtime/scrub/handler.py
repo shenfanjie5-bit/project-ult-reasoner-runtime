@@ -19,20 +19,33 @@ def scrub_payload(value: Any, rule_set: ScrubRuleSet | None = None) -> Any:
     if isinstance(value, str):
         return scrub_text(value, rule_set)
     if isinstance(value, dict):
-        return {
-            (
-                scrub_text(key, rule_set)
-                if isinstance(key, str)
-                else key
-            ): scrub_payload(item, rule_set)
-            for key, item in value.items()
-        }
+        scrubbed: dict[Any, Any] = {}
+        for key, item in value.items():
+            scrubbed_key = scrub_text(key, rule_set) if isinstance(key, str) else key
+            output_key = _unique_scrubbed_key(scrubbed_key, scrubbed)
+            scrubbed[output_key] = scrub_payload(item, rule_set)
+        return scrubbed
     if isinstance(value, list):
         return [scrub_payload(item, rule_set) for item in value]
     if isinstance(value, tuple):
         return tuple(scrub_payload(item, rule_set) for item in value)
 
     return value
+
+
+def _unique_scrubbed_key(key: Any, scrubbed: dict[Any, Any]) -> Any:
+    if key not in scrubbed:
+        return key
+
+    if not isinstance(key, str):
+        return key
+
+    collision_index = 2
+    while True:
+        candidate = f"{key} [DUPLICATE_KEY_{collision_index}]"
+        if candidate not in scrubbed:
+            return candidate
+        collision_index += 1
 
 
 def scrub_request(
