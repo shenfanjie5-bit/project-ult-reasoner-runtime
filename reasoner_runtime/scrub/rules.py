@@ -14,7 +14,10 @@ _RULE_ORDER = ("name", "phone", "account")
 _NEXT_FIELD_BOUNDARY = (
     r"(?=\s*(?:"
     r"姓名|客户|联系人|手机|电话|账户|账号|"
-    r"(?i:name|customer|contact|phone|tel|telephone|account|acct|card)\b"
+    r"(?i:name|customer|contact|phone|tel|telephone)\b|"
+    r"(?i:account(?:[_-]id|\s+id|\s+number|\s+no\.?)?|"
+    r"acct(?:[_-]id|\s+id)?|card(?:\s+number|\s+no\.?)?)"
+    r"(?![A-Za-z0-9_-])"
     r"|[,，;；。.\n\r]|$))"
 )
 
@@ -37,12 +40,43 @@ _PHONE_PATTERN = re.compile(
     r"|(?<!\d)(?:\+?1[\s.-]*)?(?:\(?\d{3}\)?[\s.-]*)\d{3}[\s.-]*\d{4}(?!\d)"
 )
 
-_ACCOUNT_PATTERN = re.compile(
-    r"(?P<prefix>(?:账户|账号|account|acct|card)\s*"
-    r"(?:number|no\.?)?\s*(?:为|是|is|=|:|：|#)?\s*)"
-    r"(?P<value>(?:\d[\s-]*){11,18}\d)",
+_ACCOUNT_VALUE_PATTERN = (
+    r"(?:"
+    r"(?:\d[\s-]*){11,18}\d"
+    r"|"
+    r"(?=[A-Za-z0-9_-]{6,})(?=[A-Za-z0-9_-]*\d)"
+    r"(?=[A-Za-z0-9_-]*[A-Za-z_])"
+    r"[A-Za-z0-9][A-Za-z0-9_-]{4,}[A-Za-z0-9]"
+    r")"
+)
+
+_ACCOUNT_VALUE_BOUNDARY = r"(?=$|[^A-Za-z0-9_-])"
+
+_CHINESE_ACCOUNT_PATTERN = re.compile(
+    rf"(?P<prefix>(?:账户|账号)\s*(?:id|编号|号码|号)?\s*"
+    rf"(?:为|是|is|=|:|：|#)?\s*)"
+    rf"(?P<value>{_ACCOUNT_VALUE_PATTERN})"
+    rf"{_ACCOUNT_VALUE_BOUNDARY}",
     re.IGNORECASE,
 )
+
+_ENGLISH_ACCOUNT_PATTERN = re.compile(
+    rf"(?P<prefix>"
+    rf"(?:"
+    rf"\b(?:account[_-]id|account\s+id|account\s+number|account\s+no\.?|"
+    rf"acct[_-]id|acct\s+id|card\s+number|card\s+no\.?)"
+    rf"(?![A-Za-z0-9_-])"
+    rf"|"
+    rf"\b(?:account|acct|card)\b"
+    rf")"
+    rf"(?:\s*(?:is|=|:|#)\s*|\s+)"
+    rf")"
+    rf"(?P<value>{_ACCOUNT_VALUE_PATTERN})"
+    rf"{_ACCOUNT_VALUE_BOUNDARY}",
+    re.IGNORECASE,
+)
+
+_ACCOUNT_PATTERNS = (_CHINESE_ACCOUNT_PATTERN, _ENGLISH_ACCOUNT_PATTERN)
 
 
 def enabled_rule_types(rule_set: ScrubRuleSet | None = None) -> set[str]:
@@ -63,10 +97,11 @@ def scrub_text(value: str, rule_set: ScrubRuleSet | None = None) -> str:
     if "phone" in enabled_rules:
         scrubbed = _PHONE_PATTERN.sub(REDACTED_PHONE, scrubbed)
     if "account" in enabled_rules:
-        scrubbed = _ACCOUNT_PATTERN.sub(
-            rf"\g<prefix>{REDACTED_ACCOUNT}",
-            scrubbed,
-        )
+        for pattern in _ACCOUNT_PATTERNS:
+            scrubbed = pattern.sub(
+                rf"\g<prefix>{REDACTED_ACCOUNT}",
+                scrubbed,
+            )
 
     return scrubbed
 

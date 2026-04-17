@@ -85,6 +85,47 @@ def test_scrub_text_redacts_account_variants() -> None:
         assert raw_value not in scrubbed
 
 
+def test_scrub_text_redacts_account_identifier_variants() -> None:
+    samples = [
+        ("account_id=acct_123456", "acct_123456"),
+        ("account-id: acct-123456", "acct-123456"),
+        ("account id ACCT_123456", "ACCT_123456"),
+        ("account number user-123456", "user-123456"),
+        ("account acct_123456", "acct_123456"),
+        ("acct_id=acct_123456", "acct_123456"),
+        ("账户ID：acct_123456", "acct_123456"),
+        ("账号id=acct-123456", "acct-123456"),
+    ]
+
+    for source, raw_value in samples:
+        scrubbed = scrub_text(source)
+
+        assert "[REDACTED_ACCOUNT]" in scrubbed
+        assert raw_value not in scrubbed
+
+
+def test_scrub_text_uses_account_id_labels_as_field_boundaries() -> None:
+    scrubbed = scrub_text("name Alice account_id=acct_123456")
+
+    assert scrubbed == "name [REDACTED_NAME] account_id=[REDACTED_ACCOUNT]"
+    assert "Alice" not in scrubbed
+    assert "acct_123456" not in scrubbed
+
+
+def test_scrub_text_does_not_redact_account_like_non_labels() -> None:
+    samples = [
+        "accounting2024",
+        "accountability-2024",
+        "account_idacct_123456",
+        "my_account_id=acct_123456",
+        "account active",
+        "account 123456",
+    ]
+
+    for source in samples:
+        assert scrub_text(source) == source
+
+
 def test_scrub_text_redacts_compact_chinese_fields_without_losing_account_label() -> None:
     scrubbed = scrub_text("姓名张三账户6222021234567890123手机13800138000")
 
@@ -160,6 +201,20 @@ def test_scrub_payload_scrubs_string_dict_keys() -> None:
     assert "[REDACTED_PHONE]" in nested
     assert "acct [REDACTED_ACCOUNT]" in nested["nested"]
     assert nested[7] == "kept"
+
+
+def test_scrub_payload_preserves_account_like_nested_metadata_keys() -> None:
+    payload = {
+        "accounting2024": {
+            "accountability-2024": "kept",
+            "nested": {
+                "account_idacct_123456": "also kept",
+                "my_account_id=acct_123456": "not a label boundary",
+            },
+        }
+    }
+
+    assert scrub_payload(payload) == payload
 
 
 def test_scrub_payload_preserves_colliding_sanitized_dict_keys() -> None:
