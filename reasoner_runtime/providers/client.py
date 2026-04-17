@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,13 +20,22 @@ class LiteLLMInstructorClient:
         *,
         messages: list[dict[str, Any]],
         response_model: type[Any],
+        callback_metadata: Mapping[str, Any] | None = None,
     ) -> Any:
+        reasoner_metadata = dict(callback_metadata or {})
+        reasoner_metadata.update(
+            {
+                "provider": self.profile.provider,
+                "model": self.profile.model,
+            }
+        )
         kwargs = {
             "model": self.litellm_model,
             "messages": messages,
             "response_model": response_model,
             "max_retries": self.max_retries,
             "timeout": self.profile.timeout_ms / 1000,
+            "metadata": {"reasoner": reasoner_metadata},
         }
 
         completions = self.instructor_client.chat.completions
