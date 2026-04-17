@@ -1,11 +1,25 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, cast
 
 from reasoner_runtime.config.models import ScrubRuleSet
-from reasoner_runtime.scrub.rules import scrub_text
+from reasoner_runtime.scrub.rules import (
+    REDACTED_ACCOUNT,
+    enabled_rule_types,
+    scrub_text,
+)
+
+
+_ACCOUNT_CONTEXT_KEY_PATTERN = re.compile(
+    r"^\s*(?:"
+    r"(?:账户|账号)(?:[_\s-]*(?:id|number|no\.?|编号|号码|号))?|"
+    r"(?:account|acct)(?:[_\s-]*(?:id|number|no\.?))?"
+    r")\s*$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -16,21 +30,69 @@ class ScrubbedRequest:
 
 
 def scrub_payload(value: Any, rule_set: ScrubRuleSet | None = None) -> Any:
+    account_rule_enabled = "account" in enabled_rule_types(rule_set)
+    return _scrub_payload(
+        value,
+        rule_set,
+        account_rule_enabled=account_rule_enabled,
+        redact_account_value=False,
+    )
+
+
+def _scrub_payload(
+    value: Any,
+    rule_set: ScrubRuleSet | None,
+    *,
+    account_rule_enabled: bool,
+    redact_account_value: bool,
+) -> Any:
     if isinstance(value, str):
+        if redact_account_value and account_rule_enabled:
+            return REDACTED_ACCOUNT
         return scrub_text(value, rule_set)
     if isinstance(value, dict):
         scrubbed: dict[Any, Any] = {}
         for key, item in value.items():
+            redact_child_account_value = (
+                account_rule_enabled
+                and isinstance(key, str)
+                and _is_account_context_key(key)
+            )
             scrubbed_key = scrub_text(key, rule_set) if isinstance(key, str) else key
             output_key = _unique_scrubbed_key(scrubbed_key, scrubbed)
-            scrubbed[output_key] = scrub_payload(item, rule_set)
+            scrubbed[output_key] = _scrub_payload(
+                item,
+                rule_set,
+                account_rule_enabled=account_rule_enabled,
+                redact_account_value=redact_child_account_value,
+            )
         return scrubbed
     if isinstance(value, list):
-        return [scrub_payload(item, rule_set) for item in value]
+        return [
+            _scrub_payload(
+                item,
+                rule_set,
+                account_rule_enabled=account_rule_enabled,
+                redact_account_value=redact_account_value,
+            )
+            for item in value
+        ]
     if isinstance(value, tuple):
-        return tuple(scrub_payload(item, rule_set) for item in value)
+        return tuple(
+            _scrub_payload(
+                item,
+                rule_set,
+                account_rule_enabled=account_rule_enabled,
+                redact_account_value=redact_account_value,
+            )
+            for item in value
+        )
 
     return value
+
+
+def _is_account_context_key(key: str) -> bool:
+    return bool(_ACCOUNT_CONTEXT_KEY_PATTERN.match(key))
 
 
 def _unique_scrubbed_key(key: Any, scrubbed: dict[Any, Any]) -> Any:
