@@ -21,7 +21,9 @@ class LiteLLMInstructorClient:
         messages: list[dict[str, Any]],
         response_model: type[Any],
         callback_metadata: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> Any:
+        provider_metadata = dict(metadata or {})
         reasoner_metadata = dict(callback_metadata or {})
         reasoner_metadata.update(
             {
@@ -29,13 +31,14 @@ class LiteLLMInstructorClient:
                 "model": self.profile.model,
             }
         )
+        provider_metadata["reasoner"] = reasoner_metadata
         kwargs = {
             "model": self.litellm_model,
             "messages": messages,
             "response_model": response_model,
             "max_retries": self.max_retries,
             "timeout": self.profile.timeout_ms / 1000,
-            "metadata": {"reasoner": reasoner_metadata},
+            "metadata": provider_metadata,
         }
 
         completions = self.instructor_client.chat.completions

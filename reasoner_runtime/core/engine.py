@@ -1,15 +1,20 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from json import JSONDecodeError
 from pathlib import Path
 from threading import RLock
+from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError as PydanticValidationError
 
 from reasoner_runtime.callbacks import (
+    CallbackBackend,
+    CallbackContext,
+    CallbackError,
+    CallbackSuccess,
     build_callback_backends,
     configure_litellm_callbacks,
 )
@@ -24,6 +29,7 @@ from reasoner_runtime.config.models import (
 )
 from reasoner_runtime.core.models import ReasonerRequest, StructuredGenerationResult
 from reasoner_runtime.providers import (
+    FallbackExecutionError,
     ParseValidationError,
     build_client,
     execute_with_fallback,
@@ -33,7 +39,7 @@ from reasoner_runtime.replay import (
     build_llm_lineage,
     build_replay_bundle,
 )
-from reasoner_runtime.scrub import scrub_request
+from reasoner_runtime.scrub import scrub_request, scrub_text
 from reasoner_runtime.structured import resolve_response_model, run_structured_call
 
 
@@ -52,6 +58,7 @@ def generate_structured(
     scrub_rule_set: ScrubRuleSet | None = None,
     callback_profile: CallbackProfile | None = None,
     callback_config_path: Path | None = None,
+    callback_backends: Sequence[CallbackBackend] | None = None,
 ) -> StructuredGenerationResult:
     """Generate structured output through the configured provider boundary.
 
@@ -68,6 +75,7 @@ def generate_structured(
         scrub_rule_set=scrub_rule_set,
         callback_profile=callback_profile,
         callback_config_path=callback_config_path,
+        callback_backends=callback_backends,
     )
     return result
 
@@ -82,6 +90,7 @@ def generate_structured_with_replay(
     scrub_rule_set: ScrubRuleSet | None = None,
     callback_profile: CallbackProfile | None = None,
     callback_config_path: Path | None = None,
+    callback_backends: Sequence[CallbackBackend] | None = None,
 ) -> tuple[StructuredGenerationResult, ReplayBundle]:
     if schema_registry is None:
         raise TypeError("schema_registry is required")
@@ -95,6 +104,7 @@ def generate_structured_with_replay(
         scrub_rule_set=scrub_rule_set,
         callback_profile=callback_profile,
         callback_config_path=callback_config_path,
+        callback_backends=callback_backends,
     )
 
 
@@ -108,6 +118,7 @@ def _generate_structured_with_replay_impl(
     scrub_rule_set: ScrubRuleSet | None,
     callback_profile: CallbackProfile | None,
     callback_config_path: Path | None,
+    callback_backends: Sequence[CallbackBackend] | None,
 ) -> tuple[StructuredGenerationResult, ReplayBundle]:
     normalized_request = _normalize_request(request)
     profiles = _resolve_provider_profiles(
@@ -115,6 +126,10 @@ def _generate_structured_with_replay_impl(
         provider_profiles=provider_profiles,
         provider_config_path=provider_config_path,
     )
+    direct_callback_backends = tuple(callback_backends or ())
+    callback_started_at = perf_counter()
+    _emit_callback_start(normalized_request, direct_callback_backends)
+
     with _RUNTIME_CALLBACK_LOCK:
         try:
             _configure_runtime_callbacks(
@@ -193,7 +208,21 @@ def _generate_structured_with_replay_impl(
                 result.parsed_result,
                 lineage,
             )
+            _emit_callback_success(
+                normalized_request,
+                result,
+                _decision.failure_class.value,
+                direct_callback_backends,
+            )
             return result, replay_bundle
+        except Exception as error:
+            _emit_callback_error(
+                normalized_request,
+                error,
+                direct_callback_backends,
+                callback_started_at,
+            )
+            raise
         finally:
             configure_litellm_callbacks(())
 
@@ -241,6 +270,113 @@ def _configure_runtime_callbacks(
     )
     backends = build_callback_backends(resolved_profile)
     configure_litellm_callbacks(backends)
+
+
+def _emit_callback_start(
+    request: ReasonerRequest,
+    backends: Sequence[CallbackBackend],
+) -> None:
+    if not backends:
+        return
+
+    context = _callback_context(
+        request,
+        provider=request.configured_provider,
+        model=request.configured_model,
+    )
+    for backend in backends:
+        try:
+            backend.on_start(context)
+        except Exception:
+            continue
+
+
+def _emit_callback_success(
+    request: ReasonerRequest,
+    result: StructuredGenerationResult,
+    failure_class: str,
+    backends: Sequence[CallbackBackend],
+) -> None:
+    if not backends:
+        return
+
+    context = _callback_context(
+        request,
+        provider=result.actual_provider,
+        model=result.actual_model,
+    )
+    success = CallbackSuccess(
+        token_usage=result.token_usage,
+        cost_estimate=result.cost_estimate,
+        latency_ms=result.latency_ms,
+        fallback_path=result.fallback_path,
+        retry_count=result.retry_count,
+        failure_class=failure_class,
+    )
+    for backend in backends:
+        try:
+            backend.on_success(context, success)
+        except Exception:
+            continue
+
+
+def _emit_callback_error(
+    request: ReasonerRequest,
+    error: Exception,
+    backends: Sequence[CallbackBackend],
+    started_at: float,
+) -> None:
+    if not backends:
+        return
+
+    provider, model = _callback_error_target(request, error)
+    context = _callback_context(request, provider=provider, model=model)
+    callback_error = CallbackError(
+        error_type=type(error).__name__,
+        error_message=scrub_text(str(error)),
+        failure_class=_callback_failure_class(error),
+        latency_ms=max(int((perf_counter() - started_at) * 1000), 0),
+    )
+    for backend in backends:
+        try:
+            backend.on_error(context, callback_error)
+        except Exception:
+            continue
+
+
+def _callback_context(
+    request: ReasonerRequest,
+    *,
+    provider: str,
+    model: str,
+) -> CallbackContext:
+    return CallbackContext(
+        request_id=request.request_id,
+        caller_module=request.caller_module,
+        target_schema=request.target_schema,
+        provider=provider,
+        model=model,
+    )
+
+
+def _callback_error_target(
+    request: ReasonerRequest,
+    error: Exception,
+) -> tuple[str, str]:
+    if isinstance(error, FallbackExecutionError) and error.decision.final_target:
+        provider, _, model = error.decision.final_target.partition("/")
+        if provider and model:
+            return provider, model
+
+    return request.configured_provider, request.configured_model
+
+
+def _callback_failure_class(error: Exception) -> str:
+    if isinstance(error, FallbackExecutionError):
+        return error.decision.failure_class.value
+    if isinstance(error, ParseValidationError):
+        return "task_level"
+    return "infra_level"
 
 
 def _normalize_request(request: ReasonerRequest) -> ReasonerRequest:

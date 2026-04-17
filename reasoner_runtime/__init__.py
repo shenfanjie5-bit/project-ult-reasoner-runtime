@@ -11,9 +11,20 @@ from reasoner_runtime.core import (
     generate_structured,
     generate_structured_with_replay,
 )
-from reasoner_runtime.health import ProviderHealthStatus, QuotaStatus
-from reasoner_runtime.providers import FailureClass, FallbackDecision
-from reasoner_runtime.replay import ReplayBundle
+from reasoner_runtime.health import (
+    HealthCheckReport,
+    ProviderHealthStatus,
+    QuotaStatus,
+    health_check,
+)
+from reasoner_runtime.providers import (
+    FailureClass,
+    FallbackDecision,
+    build_client,
+    classify_failure,
+)
+from reasoner_runtime.replay import ReplayBundle, build_replay_bundle
+from reasoner_runtime.scrub import scrub_input
 
 __version__ = "0.1.0"
 
@@ -22,6 +33,7 @@ __all__ = [
     "DependencyLockEntry",
     "FailureClass",
     "FallbackDecision",
+    "HealthCheckReport",
     "ProviderHealthStatus",
     "ProviderProfile",
     "QuotaStatus",
@@ -31,6 +43,11 @@ __all__ = [
     "ScrubRuleSet",
     "StructuredGenerationResult",
     "__version__",
+    "build_client",
+    "build_replay_bundle",
+    "classify_failure",
     "generate_structured",
     "generate_structured_with_replay",
+    "health_check",
+    "scrub_input",
 ]

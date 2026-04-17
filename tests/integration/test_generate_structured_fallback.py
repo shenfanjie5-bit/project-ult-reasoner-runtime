@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
-from instructor.core import FailedAttempt, InstructorRetryException
 from pydantic import BaseModel, ValidationError
 
 from reasoner_runtime.config import ProviderProfile
@@ -20,6 +20,29 @@ from reasoner_runtime.providers.client import LiteLLMInstructorClient
 class FallbackPayload(BaseModel):
     answer: str
     confidence: float
+
+
+class FailedAttempt:
+    def __init__(self, attempt: int, exception: Exception) -> None:
+        self.attempt = attempt
+        self.exception = exception
+
+
+class InstructorRetryException(Exception):
+    def __init__(
+        self,
+        error: Exception,
+        *,
+        n_attempts: int,
+        total_usage: int,
+        create_kwargs: dict[str, Any],
+        failed_attempts: list[FailedAttempt],
+    ) -> None:
+        super().__init__(str(error))
+        self.n_attempts = n_attempts
+        self.total_usage = total_usage
+        self.create_kwargs = create_kwargs
+        self.failed_attempts = failed_attempts
 
 
 def _request(**overrides: Any) -> ReasonerRequest:
@@ -169,7 +192,10 @@ def test_generate_structured_uses_single_instructor_attempt_per_parse_retry() ->
     assert result.retry_count == 2
 
 
-def test_generate_structured_retries_instructor_validation_exhaustion() -> None:
+def test_generate_structured_retries_instructor_validation_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_instructor_core(monkeypatch)
     primary = ProviderProfile(provider="openai", model="gpt-4", fallback_priority=0)
     completions = _InstructorRetryCompletions()
     instructor_client = SimpleNamespace(
@@ -303,3 +329,13 @@ def _fallback_payload_validation_error() -> ValidationError:
         return error
 
     raise AssertionError("expected invalid FallbackPayload to fail validation")
+
+
+def _install_fake_instructor_core(monkeypatch: pytest.MonkeyPatch) -> None:
+    instructor_module = ModuleType("instructor")
+    core_module = ModuleType("instructor.core")
+    core_module.FailedAttempt = FailedAttempt
+    core_module.InstructorRetryException = InstructorRetryException
+
+    monkeypatch.setitem(sys.modules, "instructor", instructor_module)
+    monkeypatch.setitem(sys.modules, "instructor.core", core_module)
