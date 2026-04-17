@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -51,6 +53,20 @@ def test_langfuse_start_records_context_metadata_only() -> None:
         "model": "gpt-4",
     }
     _assert_no_payload_keys(event["metadata"])
+
+
+def test_langfuse_backend_supports_create_event_client_shape() -> None:
+    client = _FakeCreateEventClient()
+    backend = LangfuseCallbackBackend(client=client)
+
+    backend.on_start(_context())
+
+    event = client.events[0]
+    assert event["name"] == "reasoner.llm.start"
+    assert event["metadata"]["request_id"] == "req-langfuse"
+    assert event["trace_context"] == {
+        "trace_id": hashlib.sha256(b"req-langfuse").hexdigest()[:32]
+    }
 
 
 def test_langfuse_success_records_whitelisted_metadata() -> None:
@@ -146,6 +162,21 @@ def test_langfuse_backend_supports_trace_event_client_shape() -> None:
     assert client.trace_events[0]["metadata"]["request_id"] == "req-langfuse"
 
 
+def test_langfuse_backend_warns_for_unsupported_client_shape(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    backend = LangfuseCallbackBackend(client=object())
+
+    with caplog.at_level(
+        logging.WARNING,
+        logger="reasoner_runtime.callbacks.langfuse",
+    ):
+        backend.on_start(_context())
+
+    assert backend.unsupported_client_events == 1
+    assert "unsupported client shape object" in caplog.text
+
+
 def test_default_client_maps_host_to_langfuse_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(
         sys.modules,
@@ -165,6 +196,23 @@ def test_default_client_missing_sdk_raises_clear_runtime_error(
 
     with pytest.raises(RuntimeError, match="optional 'langfuse' package"):
         _build_default_client(None)
+
+
+def test_langfuse_missing_sdk_is_visible_during_callback_emit(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setitem(sys.modules, "langfuse", None)
+    backend = LangfuseCallbackBackend()
+
+    with caplog.at_level(
+        logging.WARNING,
+        logger="reasoner_runtime.callbacks.langfuse",
+    ):
+        backend.on_start(_context())
+
+    assert backend.export_failures == 1
+    assert "optional 'langfuse' package" in caplog.text
 
 
 def test_factory_builds_langfuse_backend_and_disabled_profile_skips_sdk(
@@ -231,6 +279,26 @@ class _FakeEventClient:
 
     def event(self, *, name: str, metadata: dict[str, Any]) -> None:
         self.events.append({"name": name, "metadata": metadata})
+
+
+class _FakeCreateEventClient:
+    def __init__(self) -> None:
+        self.events: list[dict[str, Any]] = []
+
+    def create_event(
+        self,
+        *,
+        name: str,
+        metadata: dict[str, Any],
+        trace_context: dict[str, str] | None = None,
+    ) -> None:
+        self.events.append(
+            {
+                "name": name,
+                "metadata": metadata,
+                "trace_context": trace_context,
+            }
+        )
 
 
 class _FakeTrace:

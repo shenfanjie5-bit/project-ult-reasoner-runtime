@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from types import SimpleNamespace
 from typing import Any
 
@@ -50,6 +51,9 @@ def test_langfuse_callback_profile_enters_runtime_pipeline(
         "reasoner.llm.start",
         "reasoner.llm.success",
     ]
+    assert langfuse_client.events[0]["trace_context"] == {
+        "trace_id": hashlib.sha256(b"req-langfuse-profile").hexdigest()[:32]
+    }
     success_metadata = langfuse_client.events[1]["metadata"]
     assert success_metadata["request_id"] == "req-langfuse-profile"
     assert success_metadata["provider"] == "openai"
@@ -136,7 +140,9 @@ def test_langfuse_profile_and_direct_backend_emit_same_error_payloads(
             callback_backends=[LangfuseCallbackBackend(client=direct_client)],
         )
 
-    assert profile_client.events == direct_client.events
+    assert _events_without_error_latency(profile_client.events) == (
+        _events_without_error_latency(direct_client.events)
+    )
     error_metadata = profile_client.events[1]["metadata"]
     assert error_metadata["error_type"] == "FallbackExecutionError"
     assert error_metadata["failure_class"] == "infra_level"
@@ -227,6 +233,18 @@ def _payload_keys() -> set[str]:
     }
 
 
+def _events_without_error_latency(
+    events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    normalized_events: list[dict[str, Any]] = []
+    for event in events:
+        metadata = dict(event["metadata"])
+        if "error_type" in metadata:
+            metadata.pop("latency_ms", None)
+        normalized_events.append({**event, "metadata": metadata})
+    return normalized_events
+
+
 class _SuccessClient:
     def create_structured(
         self,
@@ -259,5 +277,17 @@ class _FakeLangfuseClient:
     def __init__(self) -> None:
         self.events: list[dict[str, Any]] = []
 
-    def event(self, *, name: str, metadata: dict[str, Any]) -> None:
-        self.events.append({"name": name, "metadata": metadata})
+    def create_event(
+        self,
+        *,
+        name: str,
+        metadata: dict[str, Any],
+        trace_context: dict[str, str] | None = None,
+    ) -> None:
+        self.events.append(
+            {
+                "name": name,
+                "metadata": metadata,
+                "trace_context": trace_context,
+            }
+        )
