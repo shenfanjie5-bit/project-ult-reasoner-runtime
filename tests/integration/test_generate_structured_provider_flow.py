@@ -65,7 +65,7 @@ def test_generate_structured_uses_selected_profile_and_schema_registry() -> None
         client_factory=client_factory,
     )
 
-    assert client_factory_calls == [(selected_fallback, 3)]
+    assert client_factory_calls == [(selected_fallback, 1)]
     assert completions.calls[0]["messages"] is request.messages
     assert completions.calls[0]["response_model"] is ProviderFlowPayload
     assert result.parsed_result == {"answer": "fallback-ok", "confidence": 0.75}

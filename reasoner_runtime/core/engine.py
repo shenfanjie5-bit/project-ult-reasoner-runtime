@@ -21,6 +21,7 @@ from reasoner_runtime.structured import resolve_response_model, run_structured_c
 
 
 ClientFactory = Callable[[ProviderProfile, int], Any]
+_INSTRUCTOR_ATTEMPTS_PER_FALLBACK_RETRY = 1
 
 
 def generate_structured(
@@ -98,11 +99,15 @@ def _generate_structured_with_replay_impl(
     def call_provider(
         call_request: ReasonerRequest,
         profile: ProviderProfile,
-        _parse_retry_index: int,
+        parse_retry_index: int,
     ) -> StructuredGenerationResult:
         nonlocal final_raw_output
 
-        client = client_factory(profile, call_request.max_retries)
+        if parse_retry_index < 0:
+            raise ValueError("parse_retry_index must be greater than or equal to 0")
+
+        # execute_with_fallback owns request.max_retries; Instructor gets one attempt.
+        client = client_factory(profile, _INSTRUCTOR_ATTEMPTS_PER_FALLBACK_RETRY)
         call_result = run_structured_call(client, call_request, response_model)
         final_raw_output = call_result.raw_output
 

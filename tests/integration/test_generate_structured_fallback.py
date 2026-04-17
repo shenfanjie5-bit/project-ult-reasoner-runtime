@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from reasoner_runtime.config import ProviderProfile
 from reasoner_runtime.core import ReasonerRequest, generate_structured
+from reasoner_runtime.providers.client import LiteLLMInstructorClient
 
 
 class FallbackPayload(BaseModel):
@@ -53,7 +54,7 @@ def test_generate_structured_falls_back_after_provider_infra_failure() -> None:
         client_factory=client_factory,
     )
 
-    assert client_factory_calls == [(primary, 2), (fallback, 2)]
+    assert client_factory_calls == [(primary, 1), (fallback, 1)]
     assert completion_calls == ["openai/gpt-4", "anthropic/claude-sonnet-4.5"]
     assert result.parsed_result == {"answer": "fallback-ok", "confidence": 0.75}
     assert result.actual_provider == "anthropic"
@@ -100,13 +101,65 @@ def test_generate_structured_retries_parse_failure_on_current_provider() -> None
         client_factory=client_factory,
     )
 
-    assert client_factory_calls == [(primary, 2), (primary, 2)]
+    assert client_factory_calls == [(primary, 1), (primary, 1)]
     assert result.parsed_result == {"answer": "retry-ok", "confidence": 0.9}
     assert result.actual_provider == "openai"
     assert result.actual_model == "gpt-4"
     assert result.fallback_path == ["openai/gpt-4"]
     assert result.retry_count == 1
     assert result.token_usage == {"prompt": 3, "completion": 4, "total": 7}
+
+
+def test_generate_structured_uses_single_instructor_attempt_per_parse_retry() -> None:
+    primary = ProviderProfile(provider="openai", model="gpt-4", fallback_priority=0)
+    completions = _RetryCompletions(
+        [
+            {"answer": "missing confidence"},
+            {"answer": "still missing confidence"},
+            (
+                FallbackPayload(answer="retry-ok", confidence=0.9),
+                SimpleNamespace(
+                    choices=[
+                        {
+                            "message": {
+                                "content": (
+                                    '{"answer":"retry-ok","confidence":0.9}'
+                                )
+                            }
+                        }
+                    ],
+                    token_usage={"prompt": 3, "completion": 4, "total": 7},
+                    cost_estimate=0.01,
+                    latency_ms=11,
+                ),
+            ),
+        ]
+    )
+    instructor_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=completions),
+    )
+    client_factory_calls: list[tuple[ProviderProfile, int]] = []
+
+    def client_factory(profile: ProviderProfile, max_retries: int) -> Any:
+        client_factory_calls.append((profile, max_retries))
+        return LiteLLMInstructorClient(
+            profile=profile,
+            max_retries=max_retries,
+            litellm_model=f"{profile.provider}/{profile.model}",
+            instructor_client=instructor_client,
+        )
+
+    result = generate_structured(
+        _request(max_retries=2),
+        schema_registry={"FallbackPayload": FallbackPayload},
+        provider_profiles=[primary],
+        client_factory=client_factory,
+    )
+
+    assert client_factory_calls == [(primary, 1), (primary, 1), (primary, 1)]
+    assert len(completions.calls) == 3
+    assert [call["max_retries"] for call in completions.calls] == [1, 1, 1]
+    assert result.retry_count == 2
 
 
 def test_generate_structured_normalizes_provider_qualified_fallback_path() -> None:
@@ -171,8 +224,10 @@ class _FallbackCompletions:
 class _RetryCompletions:
     def __init__(self, responses: list[Any]) -> None:
         self.responses = responses
+        self.calls: list[dict[str, Any]] = []
 
     def create_with_completion(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
         return self.responses.pop(0)
 
 
