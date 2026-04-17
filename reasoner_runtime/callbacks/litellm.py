@@ -10,6 +10,13 @@ from reasoner_runtime.callbacks.base import (
     CallbackError,
     CallbackSuccess,
 )
+from reasoner_runtime.scrub import scrub_text
+
+
+_MAX_ERROR_MESSAGE_CHARS = 500
+_UNKNOWN_PROVIDER_ERROR_TYPE = "UnknownProviderError"
+_UNKNOWN_PROVIDER_ERROR_MESSAGE = "unknown provider error"
+_ERROR_CODE_KEYS = ("error_code", "code", "status_code", "status")
 
 
 class LiteLLMCallbackBridge:
@@ -55,10 +62,10 @@ class LiteLLMCallbackBridge:
     ) -> None:
         try:
             context = _build_context(kwargs)
-            error_source = _extract_error_source(kwargs, completion_response)
+            error_type, error_message = _extract_error_details(kwargs)
             error = CallbackError(
-                error_type=type(error_source).__name__,
-                error_message=str(error_source),
+                error_type=error_type,
+                error_message=error_message,
                 failure_class=_extract_failure_class(kwargs),
                 latency_ms=_extract_latency_ms(None, start_time, end_time),
             )
@@ -241,12 +248,61 @@ def _extract_failure_class(kwargs: Mapping[str, Any]) -> str | None:
     return _string_value(getattr(value, "value", value))
 
 
-def _extract_error_source(kwargs: Mapping[str, Any], completion_response: Any) -> Any:
+def _extract_error_details(kwargs: Mapping[str, Any]) -> tuple[str, str]:
     for key in ("exception", "error", "original_exception"):
         value = kwargs.get(key)
         if value is not None:
-            return value
-    return completion_response if completion_response is not None else "unknown error"
+            return _safe_error_type(value), _safe_error_message(value)
+    return _UNKNOWN_PROVIDER_ERROR_TYPE, _UNKNOWN_PROVIDER_ERROR_MESSAGE
+
+
+def _safe_error_type(value: Any) -> str:
+    if isinstance(value, Mapping):
+        for key in ("error_type", "type"):
+            error_type = value.get(key)
+            if isinstance(error_type, str) and error_type.strip():
+                return _truncate(scrub_text(error_type.strip()))
+        return _UNKNOWN_PROVIDER_ERROR_TYPE
+
+    return type(value).__name__
+
+
+def _safe_error_message(value: Any) -> str:
+    if isinstance(value, BaseException):
+        return _scrubbed_truncated_message(str(value))
+
+    if isinstance(value, str):
+        return _scrubbed_truncated_message(value)
+
+    if isinstance(value, Mapping):
+        for key in _ERROR_CODE_KEYS:
+            error_code = value.get(key)
+            if _is_scalar(error_code):
+                return _scrubbed_truncated_message(f"{key}={error_code}")
+
+    for key in _ERROR_CODE_KEYS:
+        error_code = _read_value(value, key)
+        if _is_scalar(error_code):
+            return _scrubbed_truncated_message(f"{key}={error_code}")
+
+    return _UNKNOWN_PROVIDER_ERROR_MESSAGE
+
+
+def _scrubbed_truncated_message(value: str) -> str:
+    scrubbed = scrub_text(value).strip()
+    if not scrubbed:
+        return _UNKNOWN_PROVIDER_ERROR_MESSAGE
+    return _truncate(scrubbed)
+
+
+def _truncate(value: str) -> str:
+    if len(value) <= _MAX_ERROR_MESSAGE_CHARS:
+        return value
+    return value[: _MAX_ERROR_MESSAGE_CHARS - 3].rstrip() + "..."
+
+
+def _is_scalar(value: Any) -> bool:
+    return isinstance(value, str | int | float | bool)
 
 
 def _read_nonnegative_int(source: Any | None, key: str) -> int:

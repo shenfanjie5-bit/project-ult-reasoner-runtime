@@ -190,6 +190,72 @@ def test_litellm_bridge_failure_extracts_object_shape_and_isolates_backends() ->
     assert error.latency_ms == 5
 
 
+def test_litellm_bridge_failure_never_uses_completion_response_as_error_message() -> None:
+    recorder = _RecordingBackend()
+    bridge = LiteLLMCallbackBridge([recorder])
+
+    bridge.failure_handler(
+        {
+            "model": "openai/gpt-4",
+            "metadata": {"reasoner": {"request_id": "req-safe-fail"}},
+        },
+        {
+            "messages": [
+                {"role": "user", "content": "name Alice phone 13800138000"}
+            ],
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            "raw_output account 123456789012 should not leak"
+                        )
+                    }
+                }
+            ],
+        },
+        20.0,
+        20.003,
+    )
+
+    _, error = recorder.errors[0]
+    assert error.error_type == "UnknownProviderError"
+    assert error.error_message == "unknown provider error"
+    assert "Alice" not in error.error_message
+    assert "13800138000" not in error.error_message
+    assert "123456789012" not in error.error_message
+    assert "raw_output" not in error.error_message
+
+
+def test_litellm_bridge_failure_scrubs_and_truncates_explicit_error_messages() -> None:
+    recorder = _RecordingBackend()
+    bridge = LiteLLMCallbackBridge([recorder])
+    raw_message = (
+        "name Alice phone 13800138000 account 123456789012 " + ("x" * 700)
+    )
+
+    bridge.failure_handler(
+        {
+            "model": "openai/gpt-4",
+            "metadata": {"reasoner": {"request_id": "req-scrubbed-fail"}},
+            "exception": RuntimeError(raw_message),
+        },
+        None,
+        30.0,
+        30.002,
+    )
+
+    _, error = recorder.errors[0]
+    assert error.error_type == "RuntimeError"
+    assert len(error.error_message) <= 500
+    assert error.error_message.endswith("...")
+    assert "[REDACTED_NAME]" in error.error_message
+    assert "[REDACTED_PHONE]" in error.error_message
+    assert "[REDACTED_ACCOUNT]" in error.error_message
+    assert "Alice" not in error.error_message
+    assert "13800138000" not in error.error_message
+    assert "123456789012" not in error.error_message
+
+
 def test_configure_litellm_callbacks_registers_once(monkeypatch: Any) -> None:
     fake_litellm = SimpleNamespace(success_callback=[], failure_callback=[])
     monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
