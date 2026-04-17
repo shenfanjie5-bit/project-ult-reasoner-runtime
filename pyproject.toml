@@ -11,8 +11,8 @@ requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",
-    "litellm",
-    "instructor",
+    "litellm==1.83.0",
+    "instructor==1.15.1",
 ]
 
 [tool.setuptools]

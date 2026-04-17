@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+from pydantic import BaseModel
 
 from reasoner_runtime.config.loader import load_provider_profiles
 from reasoner_runtime.config.models import ProviderProfile
 from reasoner_runtime.core.models import ReasonerRequest, StructuredGenerationResult
 from reasoner_runtime.providers import build_client, select_provider
+from reasoner_runtime.structured import resolve_response_model, run_structured_call
 
 
 ClientFactory = Callable[[ProviderProfile, int], Any]
@@ -17,16 +20,16 @@ ClientFactory = Callable[[ProviderProfile, int], Any]
 def generate_structured(
     request: ReasonerRequest,
     *,
+    schema_registry: Mapping[str, type[BaseModel]],
     provider_profiles: list[ProviderProfile] | None = None,
     provider_config_path: Path | None = None,
     client_factory: ClientFactory = build_client,
 ) -> StructuredGenerationResult:
     """Generate structured output through the configured provider boundary.
 
-    Phase 0 keeps the model call as a placeholder, but the runtime seam is
-    established here: callers may inject provider profiles directly or load
-    them from a config path. Without either, the configured request target is
-    converted into a single placeholder profile to preserve existing callers.
+    Callers may inject provider profiles directly or load them from a config
+    path. Without either, the configured request target is converted into a
+    single profile to preserve the provider boundary.
     """
     normalized_request = _normalize_request(request)
     profiles = _resolve_provider_profiles(
@@ -39,7 +42,7 @@ def generate_structured(
         normalized_request.configured_model,
         profiles,
     )
-    _client = client_factory(selected_profile, normalized_request.max_retries)
+    client = client_factory(selected_profile, normalized_request.max_retries)
 
     # scrub: #19 will replace this pass-through with scrub_input().
     _sanitized_messages = normalized_request.messages
@@ -47,22 +50,24 @@ def generate_structured(
     actual_provider = selected_profile.provider
     actual_model = selected_profile.model
 
-    # call: #16 will replace this placeholder with the LiteLLM/Instructor call.
-    _raw_output = ""
-
-    # parse: #16 will parse raw model output into the requested target schema.
-    parsed_result: dict[str, object] = {}
+    response_model = resolve_response_model(
+        normalized_request.target_schema,
+        schema_registry,
+    )
+    call_result = run_structured_call(client, normalized_request, response_model)
+    _raw_output = call_result.raw_output
 
     # bundle: #17 will build the replay bundle from sanitized input and output.
     _replay_bundle = None
 
     return StructuredGenerationResult(
-        parsed_result=parsed_result,
+        parsed_result=call_result.parsed_result,
         actual_provider=actual_provider,
         actual_model=actual_model,
-        token_usage={"prompt": 0, "completion": 0, "total": 0},
-        cost_estimate=0.0,
-        latency_ms=0,
+        fallback_path=[_format_target(selected_profile)],
+        token_usage=call_result.token_usage,
+        cost_estimate=call_result.cost_estimate,
+        latency_ms=call_result.latency_ms,
     )
 
 
@@ -118,3 +123,7 @@ def _normalize_request(request: ReasonerRequest) -> ReasonerRequest:
         return request
 
     return request.model_copy(update={"request_id": str(uuid4())})
+
+
+def _format_target(profile: ProviderProfile) -> str:
+    return f"{profile.provider}/{profile.model}"

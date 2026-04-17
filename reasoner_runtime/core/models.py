@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
+
+
+NonNegativeInt = Annotated[int, Field(ge=0)]
 
 
 class ReasonerRequest(BaseModel):
@@ -21,7 +24,7 @@ class StructuredGenerationResult(BaseModel):
     actual_provider: str
     actual_model: str
     fallback_path: list[str] = Field(default_factory=list)
-    retry_count: int = 0
-    token_usage: dict[str, int]
-    cost_estimate: float
-    latency_ms: int
+    retry_count: int = Field(default=0, ge=0)
+    token_usage: dict[str, NonNegativeInt]
+    cost_estimate: float = Field(ge=0)
+    latency_ms: int = Field(ge=0)
