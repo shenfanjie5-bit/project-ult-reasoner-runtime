@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+from uuid import UUID
+
+import pytest
+
+from reasoner_runtime.core import (
+    ReasonerRequest,
+    StructuredGenerationResult,
+    generate_structured,
+)
+from reasoner_runtime.core.engine import _normalize_request
+
+
+def _request(**overrides: object) -> ReasonerRequest:
+    payload = {
+        "request_id": "req-1",
+        "caller_module": "test",
+        "target_schema": "TestSchema",
+        "messages": [{"role": "user", "content": "hello"}],
+        "configured_provider": "openai",
+        "configured_model": "gpt-4",
+        "max_retries": 2,
+    }
+    payload.update(overrides)
+    return ReasonerRequest(**payload)
+
+
+def test_generate_structured_returns_structured_generation_result() -> None:
+    result = generate_structured(_request())
+
+    assert isinstance(result, StructuredGenerationResult)
+
+
+def test_generate_structured_uses_configured_target_in_placeholder_result() -> None:
+    result = generate_structured(
+        _request(configured_provider="anthropic", configured_model="claude-sonnet-4.5")
+    )
+
+    assert result.actual_provider == "anthropic"
+    assert result.actual_model == "claude-sonnet-4.5"
+
+
+def test_generate_structured_placeholder_result_has_zero_usage() -> None:
+    result = generate_structured(_request())
+
+    assert result.parsed_result == {}
+    assert result.token_usage == {"prompt": 0, "completion": 0, "total": 0}
+    assert result.cost_estimate == 0.0
+    assert result.latency_ms == 0
+
+
+def test_normalize_request_preserves_existing_request_id() -> None:
+    request = _request(request_id="req-stable")
+
+    normalized = _normalize_request(request)
+
+    assert normalized is request
+    assert normalized.request_id == "req-stable"
+
+
+def test_normalize_request_generates_uuid_for_empty_request_id() -> None:
+    request = _request(request_id="")
+
+    normalized = _normalize_request(request)
+
+    assert normalized.request_id
+    UUID(normalized.request_id)
+
+
+def test_normalize_request_rejects_negative_max_retries() -> None:
+    request = ReasonerRequest.model_construct(
+        request_id="req-1",
+        caller_module="test",
+        target_schema="TestSchema",
+        messages=[],
+        configured_provider="openai",
+        configured_model="gpt-4",
+        max_retries=-1,
+        metadata={},
+    )
+
+    with pytest.raises(ValueError, match="max_retries"):
+        _normalize_request(request)
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ["caller_module", "target_schema", "configured_provider", "configured_model"],
+)
+def test_normalize_request_rejects_empty_required_text_fields(field_name: str) -> None:
+    request = _request(**{field_name: "  "})
+
+    with pytest.raises(ValueError, match=field_name):
+        _normalize_request(request)
+
+
+def test_normalize_request_rejects_non_reasoner_request() -> None:
+    with pytest.raises(TypeError, match="ReasonerRequest"):
+        _normalize_request(object())  # type: ignore[arg-type]
