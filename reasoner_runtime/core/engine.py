@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,11 @@ from reasoner_runtime.config.loader import load_provider_profiles
 from reasoner_runtime.config.models import ProviderProfile
 from reasoner_runtime.core.models import ReasonerRequest, StructuredGenerationResult
 from reasoner_runtime.providers import build_client, execute_with_fallback
+from reasoner_runtime.replay import (
+    ReplayBundle,
+    build_llm_lineage,
+    build_replay_bundle,
+)
 from reasoner_runtime.structured import resolve_response_model, run_structured_call
 
 
@@ -31,6 +37,44 @@ def generate_structured(
     path. Without either, the configured request target is converted into a
     single profile to preserve the provider boundary.
     """
+    result, _bundle = _generate_structured_with_replay_impl(
+        request,
+        schema_registry=schema_registry,
+        provider_profiles=provider_profiles,
+        provider_config_path=provider_config_path,
+        client_factory=client_factory,
+    )
+    return result
+
+
+def generate_structured_with_replay(
+    request: ReasonerRequest,
+    provider_profiles: list[ProviderProfile] | None = None,
+    schema_registry: Mapping[str, type[BaseModel]] | None = None,
+    client_factory: ClientFactory = build_client,
+    *,
+    provider_config_path: Path | None = None,
+) -> tuple[StructuredGenerationResult, ReplayBundle]:
+    if schema_registry is None:
+        raise TypeError("schema_registry is required")
+
+    return _generate_structured_with_replay_impl(
+        request,
+        schema_registry=schema_registry,
+        provider_profiles=provider_profiles,
+        provider_config_path=provider_config_path,
+        client_factory=client_factory,
+    )
+
+
+def _generate_structured_with_replay_impl(
+    request: ReasonerRequest,
+    *,
+    schema_registry: Mapping[str, type[BaseModel]],
+    provider_profiles: list[ProviderProfile] | None,
+    provider_config_path: Path | None,
+    client_factory: ClientFactory,
+) -> tuple[StructuredGenerationResult, ReplayBundle]:
     normalized_request = _normalize_request(request)
     profiles = _resolve_provider_profiles(
         normalized_request,
@@ -40,23 +84,27 @@ def generate_structured(
 
     # scrub: #19 will replace this pass-through with scrub_input().
     _sanitized_messages = normalized_request.messages
+    _sanitized_input = _serialize_sanitized_input(_sanitized_messages)
+    runtime_request = normalized_request.model_copy(
+        update={"messages": _sanitized_messages}
+    )
 
     response_model = resolve_response_model(
         normalized_request.target_schema,
         schema_registry,
     )
+    final_raw_output: str | None = None
 
     def call_provider(
         call_request: ReasonerRequest,
         profile: ProviderProfile,
         _parse_retry_index: int,
     ) -> StructuredGenerationResult:
+        nonlocal final_raw_output
+
         client = client_factory(profile, call_request.max_retries)
         call_result = run_structured_call(client, call_request, response_model)
-        _raw_output = call_result.raw_output
-
-        # bundle: #17 will build the replay bundle from sanitized input and output.
-        _replay_bundle = None
+        final_raw_output = call_result.raw_output
 
         return StructuredGenerationResult(
             parsed_result=call_result.parsed_result,
@@ -69,11 +117,21 @@ def generate_structured(
         )
 
     result, _decision = execute_with_fallback(
-        normalized_request,
+        runtime_request,
         profiles,
         call_provider,
     )
-    return result
+    if final_raw_output is None:
+        raise RuntimeError("structured call did not produce raw output")
+
+    lineage = build_llm_lineage(result)
+    replay_bundle = build_replay_bundle(
+        _sanitized_input,
+        final_raw_output,
+        result.parsed_result,
+        lineage,
+    )
+    return result, replay_bundle
 
 
 def _resolve_provider_profiles(
@@ -129,3 +187,11 @@ def _normalize_request(request: ReasonerRequest) -> ReasonerRequest:
 
     return request.model_copy(update={"request_id": str(uuid4())})
 
+
+def _serialize_sanitized_input(messages: list[dict[str, Any]]) -> str:
+    return json.dumps(
+        messages,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )

@@ -5,7 +5,12 @@ from reasoner_runtime.config import (
     ScrubRule,
     ScrubRuleSet,
 )
-from reasoner_runtime.core import ReasonerRequest, StructuredGenerationResult
+from reasoner_runtime.core import (
+    ReasonerRequest,
+    StructuredGenerationResult,
+    generate_structured,
+    generate_structured_with_replay,
+)
 from reasoner_runtime.health import ProviderHealthStatus, QuotaStatus
 from reasoner_runtime.providers import FailureClass, FallbackDecision
 from reasoner_runtime.replay import ReplayBundle
@@ -26,4 +31,6 @@ __all__ = [
     "ScrubRuleSet",
     "StructuredGenerationResult",
     "__version__",
+    "generate_structured",
+    "generate_structured_with_replay",
 ]
