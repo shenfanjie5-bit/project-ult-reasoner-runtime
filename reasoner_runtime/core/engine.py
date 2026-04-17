@@ -132,6 +132,7 @@ def _generate_structured_with_replay_impl(
             callback_config_path=callback_config_path,
             direct_callback_backends=callback_backends,
         )
+        configure_litellm_callbacks(runtime_callback_backends)
         callback_started_at = perf_counter()
         _emit_callback_start(normalized_request, runtime_callback_backends)
         try:

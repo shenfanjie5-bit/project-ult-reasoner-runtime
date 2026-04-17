@@ -88,8 +88,6 @@ def configure_litellm_callbacks(
     try:
         import litellm
     except ImportError:
-        if backends:
-            raise
         return None
 
     _remove_installed_handlers(litellm)
