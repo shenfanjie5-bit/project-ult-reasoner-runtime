@@ -9,7 +9,11 @@ from pydantic import BaseModel, ValidationError
 
 from reasoner_runtime.config import ProviderProfile
 from reasoner_runtime.core import ReasonerRequest, StructuredGenerationResult
-from reasoner_runtime.providers import ParseValidationError, build_client
+from reasoner_runtime.providers import (
+    ParseValidationError,
+    ProviderConfigError,
+    build_client,
+)
 from reasoner_runtime.providers import client as provider_client
 from reasoner_runtime.structured import (
     StructuredCallResult,
@@ -99,6 +103,25 @@ def test_build_client_signature_requires_explicit_max_retries() -> None:
     signature = inspect.signature(build_client)
 
     assert signature.parameters["max_retries"].default is inspect.Parameter.empty
+
+
+def test_build_client_rejects_provider_qualified_model_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        provider_client,
+        "_create_instructor_client",
+        lambda: pytest.fail("instructor client should not be created"),
+    )
+    profile = ProviderProfile(
+        provider="openai",
+        model="anthropic/claude-sonnet-4.5",
+        timeout_ms=2500,
+        fallback_priority=0,
+    )
+
+    with pytest.raises(ProviderConfigError, match="conflicts"):
+        build_client(profile, 2)
 
 
 def test_build_client_passes_profile_and_max_retries_to_instructor_wrapper(
