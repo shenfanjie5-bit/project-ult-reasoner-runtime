@@ -50,6 +50,7 @@ def run_structured_call(
     client_response = _invoke_client(
         client,
         messages=request.messages,
+        request_metadata=request.metadata,
         response_model=response_model,
         callback_metadata=_build_callback_metadata(request),
     )
@@ -73,19 +74,28 @@ def _invoke_client(
     client: Any,
     *,
     messages: list[dict[str, Any]],
+    request_metadata: dict[str, Any],
     response_model: type[BaseModel],
     callback_metadata: dict[str, Any],
 ) -> Any:
     if hasattr(client, "create_structured"):
-        return _call_with_optional_metadata(
+        kwargs: dict[str, Any] = {
+            "messages": messages,
+            "response_model": response_model,
+        }
+        kwargs = _with_optional_keyword(
             client.create_structured,
-            {
-                "messages": messages,
-                "response_model": response_model,
-            },
+            kwargs,
             "callback_metadata",
             callback_metadata,
         )
+        kwargs = _with_optional_keyword(
+            client.create_structured,
+            kwargs,
+            "metadata",
+            request_metadata,
+        )
+        return client.create_structured(**kwargs)
 
     try:
         completions = client.chat.completions
@@ -102,7 +112,7 @@ def _invoke_client(
                 "response_model": response_model,
             },
             "metadata",
-            {"reasoner": callback_metadata},
+            _provider_metadata(request_metadata, callback_metadata),
         )
 
     return _call_with_optional_metadata(
@@ -112,7 +122,7 @@ def _invoke_client(
             "response_model": response_model,
         },
         "metadata",
-        {"reasoner": callback_metadata},
+        _provider_metadata(request_metadata, callback_metadata),
     )
 
 
@@ -135,6 +145,26 @@ def _call_with_optional_metadata(
     if _supports_keyword(call_fn, metadata_key):
         kwargs = {**kwargs, metadata_key: metadata_value}
     return call_fn(**kwargs)
+
+
+def _with_optional_keyword(
+    call_fn: Any,
+    kwargs: dict[str, Any],
+    keyword: str,
+    value: Any,
+) -> dict[str, Any]:
+    if _supports_keyword(call_fn, keyword):
+        return {**kwargs, keyword: value}
+    return kwargs
+
+
+def _provider_metadata(
+    request_metadata: dict[str, Any],
+    callback_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    metadata = dict(request_metadata)
+    metadata["reasoner"] = callback_metadata
+    return metadata
 
 
 def _supports_keyword(call_fn: Any, keyword: str) -> bool:
