@@ -54,9 +54,12 @@ def _scrub_payload(
         scrubbed: dict[Any, Any] = {}
         for key, item in value.items():
             redact_child_account_value = (
-                account_rule_enabled
-                and isinstance(key, str)
-                and _is_account_context_key(key)
+                redact_account_value
+                or (
+                    account_rule_enabled
+                    and isinstance(key, str)
+                    and _is_account_context_key(key)
+                )
             )
             scrubbed_key = scrub_text(key, rule_set) if isinstance(key, str) else key
             output_key = _unique_scrubbed_key(scrubbed_key, scrubbed)
