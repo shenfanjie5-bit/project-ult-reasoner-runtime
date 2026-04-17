@@ -9,6 +9,7 @@ from reasoner_runtime.callbacks.litellm import (
     LiteLLMCallbackBridge,
     configure_litellm_callbacks,
 )
+from reasoner_runtime.callbacks.langfuse import LangfuseCallbackBackend
 from reasoner_runtime.callbacks.otel import OTELCallbackBackend
 
 __all__ = [
@@ -16,6 +17,7 @@ __all__ = [
     "CallbackContext",
     "CallbackError",
     "CallbackSuccess",
+    "LangfuseCallbackBackend",
     "LiteLLMCallbackBridge",
     "OTELCallbackBackend",
     "build_callback_backends",
