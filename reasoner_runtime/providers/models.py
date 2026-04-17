@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 class FailureClass(str, Enum):
     none = "none"
+    success_with_fallback = "success_with_fallback"
     task_level = "task_level"
     infra_level = "infra_level"
 

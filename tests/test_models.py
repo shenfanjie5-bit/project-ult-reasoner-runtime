@@ -182,6 +182,18 @@ def test_fallback_decision_defaults() -> None:
     assert decision.terminal_reason is None
 
 
+def test_fallback_decision_represents_success_with_fallback() -> None:
+    decision = FallbackDecision(
+        configured_target="openai/gpt-5.4",
+        attempts=["openai/gpt-5.4", "anthropic/claude-sonnet-4.5"],
+        final_target="anthropic/claude-sonnet-4.5",
+        failure_class=FailureClass.success_with_fallback,
+    )
+
+    assert decision.failure_class is FailureClass.success_with_fallback
+    assert decision.model_dump(mode="json")["failure_class"] == "success_with_fallback"
+
+
 def test_fallback_decision_rejects_unknown_failure_class() -> None:
     with pytest.raises(ValidationError):
         FallbackDecision(
