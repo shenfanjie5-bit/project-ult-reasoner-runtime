@@ -76,6 +76,12 @@ def test_scrub_text_redacts_account_variants() -> None:
         ("account 1234567890123456", "1234567890123456"),
         ("acct: 1234-5678-9012-3456", "1234-5678-9012-3456"),
         ("card 6222 0212 3456 7890 123", "6222 0212 3456 7890 123"),
+        ("account acct_123456", "acct_123456"),
+        ("account_id=acct_123456", "acct_123456"),
+        ("account number user-account-99", "user-account-99"),
+        ("acct user_123-456", "user_123-456"),
+        ("账号ID：acct_123456", "acct_123456"),
+        ("账户_id=cn-acct_123456", "cn-acct_123456"),
     ]
 
     for source, raw_value in samples:
@@ -83,6 +89,36 @@ def test_scrub_text_redacts_account_variants() -> None:
 
         assert "[REDACTED_ACCOUNT]" in scrubbed
         assert raw_value not in scrubbed
+
+
+def test_scrub_request_redacts_labeled_account_ids_in_messages_and_metadata_keys() -> None:
+    messages = [
+        {
+            "role": "user",
+            "content": "name Alice account_id=acct_123456 账号ID：cn-acct_789",
+        }
+    ]
+    metadata = {
+        "account acct_123456": {
+            "账户_id=cn-acct_789": "ok",
+        }
+    }
+
+    scrubbed = scrub_request(messages, metadata)
+    payload = json.loads(scrubbed.sanitized_input)
+
+    assert "Alice" not in scrubbed.sanitized_input
+    assert "acct_123456" not in scrubbed.sanitized_input
+    assert "cn-acct_789" not in scrubbed.sanitized_input
+    assert (
+        scrubbed.messages[0]["content"]
+        == "name [REDACTED_NAME] account_id=[REDACTED_ACCOUNT] "
+        "账号ID：[REDACTED_ACCOUNT]"
+    )
+    assert "account [REDACTED_ACCOUNT]" in payload["metadata"]
+    assert "账户_id=[REDACTED_ACCOUNT]" in payload["metadata"][
+        "account [REDACTED_ACCOUNT]"
+    ]
 
 
 def test_scrub_text_redacts_compact_chinese_fields_without_losing_account_label() -> None:
