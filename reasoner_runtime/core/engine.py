@@ -126,17 +126,15 @@ def _generate_structured_with_replay_impl(
         provider_profiles=provider_profiles,
         provider_config_path=provider_config_path,
     )
-    direct_callback_backends = tuple(callback_backends or ())
-    callback_started_at = perf_counter()
-    _emit_callback_start(normalized_request, direct_callback_backends)
-
     with _RUNTIME_CALLBACK_LOCK:
+        runtime_callback_backends = _resolve_runtime_callback_backends(
+            callback_profile=callback_profile,
+            callback_config_path=callback_config_path,
+            direct_callback_backends=callback_backends,
+        )
+        callback_started_at = perf_counter()
+        _emit_callback_start(normalized_request, runtime_callback_backends)
         try:
-            _configure_runtime_callbacks(
-                callback_profile=callback_profile,
-                callback_config_path=callback_config_path,
-            )
-
             scrubbed = scrub_request(
                 normalized_request.messages,
                 normalized_request.metadata,
@@ -212,14 +210,14 @@ def _generate_structured_with_replay_impl(
                 normalized_request,
                 result,
                 _decision.failure_class.value,
-                direct_callback_backends,
+                runtime_callback_backends,
             )
             return result, replay_bundle
         except Exception as error:
             _emit_callback_error(
                 normalized_request,
                 error,
-                direct_callback_backends,
+                runtime_callback_backends,
                 callback_started_at,
             )
             raise
@@ -253,11 +251,12 @@ def _resolve_provider_profiles(
     ]
 
 
-def _configure_runtime_callbacks(
+def _resolve_runtime_callback_backends(
     *,
     callback_profile: CallbackProfile | None,
     callback_config_path: Path | None,
-) -> None:
+    direct_callback_backends: Sequence[CallbackBackend] | None,
+) -> tuple[CallbackBackend, ...]:
     if callback_profile is not None and callback_config_path is not None:
         raise ValueError(
             "callback_profile and callback_config_path cannot both be provided"
@@ -268,8 +267,8 @@ def _configure_runtime_callbacks(
         if callback_config_path is not None
         else callback_profile
     )
-    backends = build_callback_backends(resolved_profile)
-    configure_litellm_callbacks(backends)
+    configured_backends = build_callback_backends(resolved_profile)
+    return (*configured_backends, *tuple(direct_callback_backends or ()))
 
 
 def _emit_callback_start(

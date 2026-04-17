@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from reasoner_runtime.callbacks.base import CallbackBackend
+from reasoner_runtime.callbacks.langfuse import LangfuseCallbackBackend
 from reasoner_runtime.callbacks.otel import OTELCallbackBackend
 from reasoner_runtime.config.models import CallbackProfile
 
@@ -33,8 +34,6 @@ def _build_callback_backends_cached(
         return (OTELCallbackBackend(),)
 
     if backend == "langfuse":
-        raise NotImplementedError(
-            "langfuse callback backend is not implemented in this phase"
-        )
+        return (LangfuseCallbackBackend(host=endpoint),)
 
     raise ValueError(f"unsupported callback backend: {backend}")

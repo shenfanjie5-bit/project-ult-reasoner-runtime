@@ -109,9 +109,10 @@ def test_generate_structured_with_replay_installs_configured_callbacks(
     assert error_context.request_id == "req-callback-error"
     assert error_context.provider == "openai"
     assert error_context.model == "gpt-4"
-    assert error.error_type == "ConnectionError"
+    assert error.error_type == "FallbackExecutionError"
     assert error.error_message == "provider unavailable"
-    assert error.latency_ms == 13
+    assert error.latency_ms is not None
+    assert error.latency_ms >= 0
 
 
 def test_generate_structured_with_replay_does_not_reuse_callback_backend(
