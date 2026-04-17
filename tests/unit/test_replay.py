@@ -93,6 +93,38 @@ def test_build_replay_bundle_populates_core_five_fields_and_lineage() -> None:
     assert bundle.llm_lineage == lineage
 
 
+def test_build_replay_bundle_takes_deep_snapshot_of_nested_inputs() -> None:
+    result = _result(
+        parsed_result={
+            "answer": "ok",
+            "details": {"items": [{"value": "before"}]},
+        }
+    )
+    lineage = build_llm_lineage(result)
+
+    bundle = build_replay_bundle(
+        "input",
+        '{"answer":"ok","details":{"items":[{"value":"before"}]}}',
+        result.parsed_result,
+        lineage,
+    )
+
+    result.parsed_result["details"]["items"][0]["value"] = "after"
+    result.parsed_result["details"]["items"].append({"value": "new"})
+    lineage["fallback_path"].append("anthropic/claude-sonnet-4.5")
+
+    assert bundle.parsed_result == {
+        "answer": "ok",
+        "details": {"items": [{"value": "before"}]},
+    }
+    assert bundle.llm_lineage == {
+        "provider": "openai",
+        "model": "gpt-4",
+        "fallback_path": ["openai/gpt-4"],
+        "retry_count": 1,
+    }
+
+
 def test_build_replay_bundle_preserves_raw_output_without_normalization() -> None:
     raw_output = ' \n{"b":2,"a":1}\n '
 

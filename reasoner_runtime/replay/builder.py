@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from copy import deepcopy
 from typing import Any
 
 from reasoner_runtime.core.models import StructuredGenerationResult
@@ -30,7 +31,7 @@ def build_replay_bundle(
         sanitized_input=sanitized_input,
         input_hash=sha256_text(sanitized_input),
         raw_output=raw_output,
-        parsed_result=parsed_result,
+        parsed_result=deepcopy(parsed_result),
         output_hash=sha256_text(raw_output),
-        llm_lineage=lineage,
+        llm_lineage=deepcopy(lineage),
     )
