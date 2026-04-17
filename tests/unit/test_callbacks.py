@@ -264,9 +264,33 @@ def test_configure_litellm_callbacks_registers_once(monkeypatch: Any) -> None:
     first = configure_litellm_callbacks([backend])
     second = configure_litellm_callbacks([backend])
 
-    assert first is second
+    assert first is not None
+    assert second is not None
     assert len(fake_litellm.success_callback) == 1
     assert len(fake_litellm.failure_callback) == 1
+    assert fake_litellm.success_callback[0].__self__ is second
+    assert fake_litellm.failure_callback[0].__self__ is second
+
+
+def test_configure_litellm_callbacks_can_disable_package_handlers(
+    monkeypatch: Any,
+) -> None:
+    foreign_success = object()
+    foreign_failure = object()
+    fake_litellm = SimpleNamespace(
+        success_callback=[foreign_success],
+        failure_callback=(foreign_failure,),
+    )
+    monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
+    backend = _RecordingBackend()
+
+    bridge = configure_litellm_callbacks([backend])
+    assert bridge is not None
+
+    configure_litellm_callbacks(())
+
+    assert fake_litellm.success_callback == [foreign_success]
+    assert fake_litellm.failure_callback == [foreign_failure]
 
 
 def test_run_structured_call_passes_callback_metadata_without_extra_call() -> None:

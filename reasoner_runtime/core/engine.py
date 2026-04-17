@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from json import JSONDecodeError
 from pathlib import Path
+from threading import RLock
 from typing import Any
 from uuid import uuid4
 
@@ -38,6 +39,7 @@ from reasoner_runtime.structured import resolve_response_model, run_structured_c
 
 ClientFactory = Callable[[ProviderProfile, int], Any]
 _INSTRUCTOR_ATTEMPTS_PER_FALLBACK_RETRY = 1
+_RUNTIME_CALLBACK_LOCK = RLock()
 
 
 def generate_structured(
@@ -113,73 +115,87 @@ def _generate_structured_with_replay_impl(
         provider_profiles=provider_profiles,
         provider_config_path=provider_config_path,
     )
-    _configure_runtime_callbacks(
-        callback_profile=callback_profile,
-        callback_config_path=callback_config_path,
-    )
-
-    scrubbed = scrub_request(
-        normalized_request.messages,
-        normalized_request.metadata,
-        scrub_rule_set,
-    )
-    runtime_request = normalized_request.model_copy(
-        update={"messages": scrubbed.messages, "metadata": scrubbed.metadata}
-    )
-
-    response_model = resolve_response_model(
-        normalized_request.target_schema,
-        schema_registry,
-    )
-    final_raw_output: str | None = None
-
-    def call_provider(
-        call_request: ReasonerRequest,
-        profile: ProviderProfile,
-        parse_retry_index: int,
-    ) -> StructuredGenerationResult:
-        nonlocal final_raw_output
-
-        if parse_retry_index < 0:
-            raise ValueError("parse_retry_index must be greater than or equal to 0")
-
-        # execute_with_fallback owns request.max_retries; Instructor gets one attempt.
-        client = client_factory(profile, _INSTRUCTOR_ATTEMPTS_PER_FALLBACK_RETRY)
+    with _RUNTIME_CALLBACK_LOCK:
         try:
-            call_result = run_structured_call(client, call_request, response_model)
-        except Exception as error:
-            parse_error = _parse_error_from_instructor_retry(error)
-            if parse_error is not None:
-                raise parse_error from error
-            raise
-        final_raw_output = call_result.raw_output
+            _configure_runtime_callbacks(
+                callback_profile=callback_profile,
+                callback_config_path=callback_config_path,
+            )
 
-        return StructuredGenerationResult(
-            parsed_result=call_result.parsed_result,
-            actual_provider=profile.provider,
-            actual_model=profile.model,
-            fallback_path=[],
-            token_usage=call_result.token_usage,
-            cost_estimate=call_result.cost_estimate,
-            latency_ms=call_result.latency_ms,
-        )
+            scrubbed = scrub_request(
+                normalized_request.messages,
+                normalized_request.metadata,
+                scrub_rule_set,
+            )
+            runtime_request = normalized_request.model_copy(
+                update={"messages": scrubbed.messages, "metadata": scrubbed.metadata}
+            )
 
-    result, _decision = execute_with_fallback(
-        runtime_request,
-        profiles,
-        call_provider,
-    )
-    if final_raw_output is None:
-        raise RuntimeError("structured call did not produce raw output")
+            response_model = resolve_response_model(
+                normalized_request.target_schema,
+                schema_registry,
+            )
+            final_raw_output: str | None = None
 
-    lineage = build_llm_lineage(result)
-    replay_bundle = build_replay_bundle(
-        scrubbed.sanitized_input,
-        final_raw_output,
-        result.parsed_result,
-        lineage,
-    )
-    return result, replay_bundle
+            def call_provider(
+                call_request: ReasonerRequest,
+                profile: ProviderProfile,
+                parse_retry_index: int,
+            ) -> StructuredGenerationResult:
+                nonlocal final_raw_output
+
+                if parse_retry_index < 0:
+                    raise ValueError(
+                        "parse_retry_index must be greater than or equal to 0"
+                    )
+
+                # execute_with_fallback owns request.max_retries; Instructor
+                # gets one attempt.
+                client = client_factory(
+                    profile,
+                    _INSTRUCTOR_ATTEMPTS_PER_FALLBACK_RETRY,
+                )
+                try:
+                    call_result = run_structured_call(
+                        client,
+                        call_request,
+                        response_model,
+                    )
+                except Exception as error:
+                    parse_error = _parse_error_from_instructor_retry(error)
+                    if parse_error is not None:
+                        raise parse_error from error
+                    raise
+                final_raw_output = call_result.raw_output
+
+                return StructuredGenerationResult(
+                    parsed_result=call_result.parsed_result,
+                    actual_provider=profile.provider,
+                    actual_model=profile.model,
+                    fallback_path=[],
+                    token_usage=call_result.token_usage,
+                    cost_estimate=call_result.cost_estimate,
+                    latency_ms=call_result.latency_ms,
+                )
+
+            result, _decision = execute_with_fallback(
+                runtime_request,
+                profiles,
+                call_provider,
+            )
+            if final_raw_output is None:
+                raise RuntimeError("structured call did not produce raw output")
+
+            lineage = build_llm_lineage(result)
+            replay_bundle = build_replay_bundle(
+                scrubbed.sanitized_input,
+                final_raw_output,
+                result.parsed_result,
+                lineage,
+            )
+            return result, replay_bundle
+        finally:
+            configure_litellm_callbacks(())
 
 
 def _resolve_provider_profiles(
@@ -224,8 +240,7 @@ def _configure_runtime_callbacks(
         else callback_profile
     )
     backends = build_callback_backends(resolved_profile)
-    if backends:
-        configure_litellm_callbacks(backends)
+    configure_litellm_callbacks(backends)
 
 
 def _normalize_request(request: ReasonerRequest) -> ReasonerRequest:

@@ -15,7 +15,7 @@ from reasoner_runtime.callbacks import (
 )
 from reasoner_runtime.callbacks import factory as callback_factory
 from reasoner_runtime.callbacks import litellm as litellm_callbacks
-from reasoner_runtime.config import ProviderProfile
+from reasoner_runtime.config import CallbackProfile, ProviderProfile
 from reasoner_runtime.core import ReasonerRequest, generate_structured_with_replay
 from reasoner_runtime.providers import FallbackExecutionError
 
@@ -81,8 +81,8 @@ def test_generate_structured_with_replay_installs_configured_callbacks(
     )
 
     assert result.parsed_result == {"answer": "ok"}
-    assert len(fake_litellm.success_callback) == 1
-    assert len(fake_litellm.failure_callback) == 1
+    assert fake_litellm.success_callback == []
+    assert fake_litellm.failure_callback == []
     success_context, success = recorder.successes[0]
     assert success_context.request_id == "req-callback-success"
     assert success_context.provider == "openai"
@@ -103,8 +103,8 @@ def test_generate_structured_with_replay_installs_configured_callbacks(
             callback_config_path=callback_config_path,
         )
 
-    assert len(fake_litellm.success_callback) == 1
-    assert len(fake_litellm.failure_callback) == 1
+    assert fake_litellm.success_callback == []
+    assert fake_litellm.failure_callback == []
     error_context, error = recorder.errors[0]
     assert error_context.request_id == "req-callback-error"
     assert error_context.provider == "openai"
@@ -112,6 +112,95 @@ def test_generate_structured_with_replay_installs_configured_callbacks(
     assert error.error_type == "ConnectionError"
     assert error.error_message == "provider unavailable"
     assert error.latency_ms == 13
+
+
+def test_generate_structured_with_replay_does_not_reuse_callback_backend(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_litellm = SimpleNamespace(success_callback=[], failure_callback=[])
+    monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
+
+    recorder = _RecordingBackend()
+    callback_factory._build_callback_backends_cached.cache_clear()
+    litellm_callbacks._installed_bridges.clear()
+    monkeypatch.setattr(
+        callback_factory,
+        "OTELCallbackBackend",
+        lambda: recorder,
+    )
+
+    profile = ProviderProfile(provider="openai", model="gpt-4", fallback_priority=0)
+    callback_config_path = _callback_config_path(tmp_path)
+
+    generate_structured_with_replay(
+        _request("req-callback-enabled"),
+        provider_profiles=[profile],
+        schema_registry={"CallbackPayload": CallbackPayload},
+        client_factory=lambda _profile, _max_retries: _CallbackClient(
+            fake_litellm,
+            mode="success",
+        ),
+        callback_config_path=callback_config_path,
+    )
+
+    assert [context.request_id for context, _success in recorder.successes] == [
+        "req-callback-enabled"
+    ]
+    assert fake_litellm.success_callback == []
+    assert fake_litellm.failure_callback == []
+
+    generate_structured_with_replay(
+        _request("req-callback-no-profile"),
+        provider_profiles=[profile],
+        schema_registry={"CallbackPayload": CallbackPayload},
+        client_factory=lambda _profile, _max_retries: _CallbackClient(
+            fake_litellm,
+            mode="success",
+        ),
+    )
+
+    assert [context.request_id for context, _success in recorder.successes] == [
+        "req-callback-enabled"
+    ]
+    assert fake_litellm.success_callback == []
+    assert fake_litellm.failure_callback == []
+
+    generate_structured_with_replay(
+        _request("req-callback-enabled-again"),
+        provider_profiles=[profile],
+        schema_registry={"CallbackPayload": CallbackPayload},
+        client_factory=lambda _profile, _max_retries: _CallbackClient(
+            fake_litellm,
+            mode="success",
+        ),
+        callback_config_path=callback_config_path,
+    )
+
+    assert [context.request_id for context, _success in recorder.successes] == [
+        "req-callback-enabled",
+        "req-callback-enabled-again",
+    ]
+    assert fake_litellm.success_callback == []
+    assert fake_litellm.failure_callback == []
+
+    generate_structured_with_replay(
+        _request("req-callback-disabled"),
+        provider_profiles=[profile],
+        schema_registry={"CallbackPayload": CallbackPayload},
+        client_factory=lambda _profile, _max_retries: _CallbackClient(
+            fake_litellm,
+            mode="success",
+        ),
+        callback_profile=CallbackProfile(backend="none", enabled=False),
+    )
+
+    assert [context.request_id for context, _success in recorder.successes] == [
+        "req-callback-enabled",
+        "req-callback-enabled-again",
+    ]
+    assert fake_litellm.success_callback == []
+    assert fake_litellm.failure_callback == []
 
 
 class _CallbackClient:
