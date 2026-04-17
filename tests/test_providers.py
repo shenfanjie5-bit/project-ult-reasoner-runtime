@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from reasoner_runtime.config.models import ProviderProfile
 from reasoner_runtime.providers import (
@@ -12,6 +12,15 @@ from reasoner_runtime.providers import (
     classify_failure,
     select_provider,
 )
+from reasoner_runtime.providers.routing import (
+    NoAvailableProviderError,
+    ParseValidationError,
+    ProviderConfigError,
+)
+
+
+class _ParsedPayload(BaseModel):
+    answer: int
 
 
 def _profile(
@@ -88,8 +97,21 @@ def test_select_provider_falls_back_to_lowest_priority_profile() -> None:
 
 
 def test_select_provider_rejects_empty_profiles() -> None:
-    with pytest.raises(ValueError, match="provider profile"):
+    with pytest.raises(NoAvailableProviderError, match="provider profile"):
         select_provider("openai", "gpt-4", [])
+
+
+def test_classify_failure_marks_empty_provider_profiles_as_infra_level() -> None:
+    with pytest.raises(NoAvailableProviderError) as error:
+        select_provider("openai", "gpt-4", [])
+
+    assert classify_failure(error.value, {}) is FailureClass.infra_level
+
+
+def test_classify_failure_marks_fallback_exhaustion_as_infra_level() -> None:
+    error = NoAvailableProviderError("fallback chain exhausted")
+
+    assert classify_failure(error, {}) is FailureClass.infra_level
 
 
 def test_classify_failure_marks_connection_error_as_infra_level() -> None:
@@ -103,17 +125,47 @@ def test_classify_failure_marks_timeout_error_as_infra_level() -> None:
     assert classify_failure(TimeoutError("timed out"), {}) is FailureClass.infra_level
 
 
-def test_classify_failure_marks_value_error_as_task_level() -> None:
-    assert classify_failure(ValueError("bad parse"), {}) is FailureClass.task_level
+def test_classify_failure_marks_parse_validation_error_as_task_level() -> None:
+    assert (
+        classify_failure(ParseValidationError("bad parse"), {})
+        is FailureClass.task_level
+    )
 
 
-def test_classify_failure_marks_validation_error_as_task_level() -> None:
+def test_classify_failure_marks_value_error_with_parse_context_as_task_level() -> None:
+    assert (
+        classify_failure(ValueError("bad parse"), {"failure_source": "parse"})
+        is FailureClass.task_level
+    )
+
+
+def test_classify_failure_marks_schema_validation_with_parse_context_as_task_level() -> None:
+    try:
+        _ParsedPayload(answer="not-an-int")
+    except ValidationError as error:
+        classified = classify_failure(error, {"failure_source": "parse"})
+
+    assert classified is FailureClass.task_level
+
+
+def test_classify_failure_marks_provider_config_error_as_infra_level() -> None:
+    assert (
+        classify_failure(ProviderConfigError("invalid provider config"), {})
+        is FailureClass.infra_level
+    )
+
+
+def test_classify_failure_marks_provider_config_validation_as_infra_level() -> None:
     try:
         ProviderProfile(provider="openai")
     except ValidationError as error:
-        classified = classify_failure(error, {})
+        classified = classify_failure(error, {"failure_source": "provider_config"})
 
-    assert classified is FailureClass.task_level
+    assert classified is FailureClass.infra_level
+
+
+def test_classify_failure_marks_untyped_value_error_as_infra_level() -> None:
+    assert classify_failure(ValueError("bad route"), {}) is FailureClass.infra_level
 
 
 def test_classify_failure_defaults_unknown_errors_to_infra_level() -> None:
