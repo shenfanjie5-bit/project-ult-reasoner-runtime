@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from uuid import UUID
 
 import pytest
+from pydantic import BaseModel
 
 from reasoner_runtime.config import ProviderProfile
 from reasoner_runtime.core import (
@@ -12,6 +16,43 @@ from reasoner_runtime.core import (
     generate_structured,
 )
 from reasoner_runtime.core.engine import _normalize_request
+
+
+class _TestSchema(BaseModel):
+    answer: str
+
+
+class _FakeCompletions:
+    def __init__(self, answer: str = "ok") -> None:
+        self.answer = answer
+        self.calls: list[dict[str, Any]] = []
+
+    def create_with_completion(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        return (
+            _TestSchema(answer=self.answer),
+            SimpleNamespace(
+                choices=[{"message": {"content": f'{{"answer":"{self.answer}"}}'}}],
+                token_usage={"prompt": 1, "completion": 2, "total": 3},
+                cost_estimate=0.01,
+                latency_ms=4,
+            ),
+        )
+
+
+def _client_factory(
+    calls: list[tuple[ProviderProfile, int]] | None = None,
+) -> Callable[[ProviderProfile, int], Any]:
+    def factory(profile: ProviderProfile, max_retries: int) -> Any:
+        if calls is not None:
+            calls.append((profile, max_retries))
+        return SimpleNamespace(chat=SimpleNamespace(completions=_FakeCompletions()))
+
+    return factory
+
+
+def _schema_registry() -> dict[str, type[BaseModel]]:
+    return {"TestSchema": _TestSchema}
 
 
 def _request(**overrides: object) -> ReasonerRequest:
@@ -29,27 +70,37 @@ def _request(**overrides: object) -> ReasonerRequest:
 
 
 def test_generate_structured_returns_structured_generation_result() -> None:
-    result = generate_structured(_request())
+    result = generate_structured(
+        _request(),
+        schema_registry=_schema_registry(),
+        client_factory=_client_factory(),
+    )
 
     assert isinstance(result, StructuredGenerationResult)
 
 
-def test_generate_structured_uses_configured_target_in_placeholder_result() -> None:
+def test_generate_structured_uses_configured_target_in_result() -> None:
     result = generate_structured(
-        _request(configured_provider="anthropic", configured_model="claude-sonnet-4.5")
+        _request(configured_provider="anthropic", configured_model="claude-sonnet-4.5"),
+        schema_registry=_schema_registry(),
+        client_factory=_client_factory(),
     )
 
     assert result.actual_provider == "anthropic"
     assert result.actual_model == "claude-sonnet-4.5"
 
 
-def test_generate_structured_placeholder_result_has_zero_usage() -> None:
-    result = generate_structured(_request())
+def test_generate_structured_result_uses_structured_call_payload() -> None:
+    result = generate_structured(
+        _request(),
+        schema_registry=_schema_registry(),
+        client_factory=_client_factory(),
+    )
 
-    assert result.parsed_result == {}
-    assert result.token_usage == {"prompt": 0, "completion": 0, "total": 0}
-    assert result.cost_estimate == 0.0
-    assert result.latency_ms == 0
+    assert result.parsed_result == {"answer": "ok"}
+    assert result.token_usage == {"prompt": 1, "completion": 2, "total": 3}
+    assert result.cost_estimate == 0.01
+    assert result.latency_ms == 4
 
 
 def test_generate_structured_routes_selected_provider_to_client_factory() -> None:
@@ -65,23 +116,21 @@ def test_generate_structured_routes_selected_provider_to_client_factory() -> Non
     )
     client_calls: list[tuple[ProviderProfile, int]] = []
 
-    def client_factory(profile: ProviderProfile, max_retries: int) -> object:
-        client_calls.append((profile, max_retries))
-        return object()
-
     result = generate_structured(
         _request(
             configured_provider="missing",
             configured_model="missing-model",
             max_retries=3,
         ),
+        schema_registry=_schema_registry(),
         provider_profiles=[configured_profile, fallback_profile],
-        client_factory=client_factory,
+        client_factory=_client_factory(client_calls),
     )
 
     assert client_calls == [(fallback_profile, 3)]
     assert result.actual_provider == "anthropic"
     assert result.actual_model == "claude-sonnet-4.5"
+    assert result.fallback_path == ["anthropic/claude-sonnet-4.5"]
 
 
 def test_generate_structured_loads_provider_profiles_from_config_path(
@@ -102,18 +151,15 @@ providers:
     )
     client_calls: list[tuple[ProviderProfile, int]] = []
 
-    def client_factory(profile: ProviderProfile, max_retries: int) -> object:
-        client_calls.append((profile, max_retries))
-        return object()
-
     result = generate_structured(
         _request(
             configured_provider="openai",
             configured_model="gpt-5.4",
             max_retries=1,
         ),
+        schema_registry=_schema_registry(),
         provider_config_path=config_path,
-        client_factory=client_factory,
+        client_factory=_client_factory(client_calls),
     )
 
     assert client_calls == [

@@ -8,9 +8,9 @@ from pydantic import BaseModel, Field
 class ProviderProfile(BaseModel):
     provider: str
     model: str
-    timeout_ms: int = 30000
-    fallback_priority: int = 0
-    rate_limit_rpm: int | None = None
+    timeout_ms: int = Field(default=30000, gt=0)
+    fallback_priority: int = Field(default=0, ge=0)
+    rate_limit_rpm: int | None = Field(default=None, gt=0)
 
 
 class ScrubRule(BaseModel):

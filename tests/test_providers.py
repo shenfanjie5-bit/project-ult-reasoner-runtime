@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import inspect
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from pydantic import BaseModel, ValidationError
@@ -8,15 +10,15 @@ from pydantic import BaseModel, ValidationError
 from reasoner_runtime.config.models import ProviderProfile
 from reasoner_runtime.providers import (
     FailureClass,
+    NoAvailableProviderError,
+    ParseValidationError,
+    ProviderConfigError,
+    ProviderRoutingError,
     build_client,
     classify_failure,
     select_provider,
 )
-from reasoner_runtime.providers.routing import (
-    NoAvailableProviderError,
-    ParseValidationError,
-    ProviderConfigError,
-)
+from reasoner_runtime.providers import client as provider_client
 
 
 class _ParsedPayload(BaseModel):
@@ -51,12 +53,45 @@ def test_build_client_rejects_negative_max_retries() -> None:
         build_client(_profile(), -1)
 
 
-def test_build_client_returns_profile_and_max_retries_config() -> None:
+def test_build_client_returns_executable_instructor_wrapper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    completions = _FakeCompletions()
+    instructor_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=completions),
+    )
+    monkeypatch.setattr(
+        provider_client,
+        "_create_instructor_client",
+        lambda: instructor_client,
+    )
     profile = _profile(provider="anthropic", model="claude-sonnet-4.5")
 
     client = build_client(profile, 2)
+    client.create_structured(
+        messages=[{"role": "user", "content": "hello"}],
+        response_model=_ParsedPayload,
+    )
 
-    assert client == {"profile": profile, "max_retries": 2}
+    assert client.profile == profile
+    assert client.max_retries == 2
+    assert completions.calls[0]["model"] == "anthropic/claude-sonnet-4.5"
+    assert completions.calls[0]["max_retries"] == 2
+
+
+def test_provider_package_reexports_typed_routing_errors() -> None:
+    assert issubclass(NoAvailableProviderError, ProviderRoutingError)
+    assert issubclass(ProviderConfigError, ProviderRoutingError)
+    assert issubclass(ParseValidationError, ValueError)
+
+
+class _FakeCompletions:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def create_with_completion(self, **kwargs: Any) -> _ParsedPayload:
+        self.calls.append(kwargs)
+        return _ParsedPayload(answer=1)
 
 
 def test_select_provider_returns_exact_match() -> None:
