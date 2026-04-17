@@ -39,25 +39,44 @@ _PHONE_PATTERN = re.compile(
     r"|(?<!\d)(?:\+?1[\s.-]*)?(?:\(?\d{3}\)?[\s.-]*)\d{3}[\s.-]*\d{4}(?!\d)"
 )
 
-_ACCOUNT_LABEL = (
-    r"(?:(?:账户|账号)(?:[_\s-]*(?:id|number|no\.?|编号|号码|号))?|"
-    r"(?:account|acct)(?:[_\s-]*(?:id|number|no\.?))?)"
+_CHINESE_ACCOUNT_LABEL = (
+    r"(?:账户|账号)(?:[_\s-]*(?:id|number|no\.?|编号|号码|号))?"
 )
-_CARD_LABEL = r"(?:card)(?:[_\s-]*(?:number|no\.?))?"
-_ACCOUNT_SEPARATOR = r"\s*(?:为|是|is|=|:|：|#)?\s*"
+_ENGLISH_ACCOUNT_EXACT_LABEL = (
+    r"(?:account|acct)(?:[_-](?:id|number|no\.?)|\s+(?:id|number|no\.?))"
+)
+_ENGLISH_ACCOUNT_BARE_LABEL = r"(?:account|acct)\b"
+_ENGLISH_ACCOUNT_LABEL = (
+    rf"(?:{_ENGLISH_ACCOUNT_EXACT_LABEL}|{_ENGLISH_ACCOUNT_BARE_LABEL})"
+)
+_CARD_LABEL = (
+    r"card(?:[_-](?:number|no\.?)|\s+(?:number|no\.?))?|card\b"
+)
+_EXPLICIT_SEPARATOR = r"(?:为|是|is|=|:|：|#)"
+_CHINESE_ACCOUNT_SEPARATOR = rf"\s*{_EXPLICIT_SEPARATOR}?\s*"
+_ENGLISH_ACCOUNT_SEPARATOR = rf"(?:\s*{_EXPLICIT_SEPARATOR}\s*|\s+)"
+_ACCOUNT_VALUE_BOUNDARY = r"(?![A-Za-z0-9_-])"
 
 _NUMERIC_ACCOUNT_PATTERN = re.compile(
-    rf"(?P<prefix>(?:{_ACCOUNT_LABEL}|{_CARD_LABEL}){_ACCOUNT_SEPARATOR})"
-    r"(?P<value>(?:\d[\s-]*){11,18}\d)",
+    rf"(?P<prefix>(?:"
+    rf"{_CHINESE_ACCOUNT_LABEL}{_CHINESE_ACCOUNT_SEPARATOR}|"
+    rf"\b(?:{_ENGLISH_ACCOUNT_LABEL}|{_CARD_LABEL}){_ENGLISH_ACCOUNT_SEPARATOR}"
+    rf"))"
+    r"(?P<value>(?:\d[\s-]*){11,18}\d)"
+    + _ACCOUNT_VALUE_BOUNDARY,
     re.IGNORECASE,
 )
 _LABELED_ACCOUNT_ID_PATTERN = re.compile(
-    rf"(?P<prefix>{_ACCOUNT_LABEL}{_ACCOUNT_SEPARATOR})"
+    rf"(?P<prefix>(?:"
+    rf"{_CHINESE_ACCOUNT_LABEL}{_CHINESE_ACCOUNT_SEPARATOR}|"
+    rf"\b{_ENGLISH_ACCOUNT_LABEL}{_ENGLISH_ACCOUNT_SEPARATOR}"
+    rf"))"
     r"(?P<value>"
     r"(?=[A-Za-z0-9_-]{5,}(?![A-Za-z0-9_-]))"
     r"(?=[A-Za-z0-9_-]*[A-Za-z_-])"
     r"(?=[A-Za-z0-9_-]*[0-9_-])"
-    r"[A-Za-z0-9][A-Za-z0-9_-]{4,})",
+    r"[A-Za-z0-9][A-Za-z0-9_-]{4,})"
+    + _ACCOUNT_VALUE_BOUNDARY,
     re.IGNORECASE,
 )
 _ACCOUNT_PATTERNS = (_NUMERIC_ACCOUNT_PATTERN, _LABELED_ACCOUNT_ID_PATTERN)

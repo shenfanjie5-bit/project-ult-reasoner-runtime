@@ -13,19 +13,35 @@ from reasoner_runtime.scrub.rules import (
 )
 
 
+_CHINESE_ACCOUNT_CONTEXT_LABEL = (
+    r"(?:账户|账号)(?:[_\s-]*(?:id|number|no\.?|编号|号码|号))?"
+)
+_ENGLISH_ACCOUNT_CONTEXT_EXACT_LABEL = (
+    r"(?:account|acct)(?:[_-](?:id|number|no\.?)|\s+(?:id|number|no\.?))"
+)
+_ENGLISH_ACCOUNT_CONTEXT_BARE_LABEL = r"(?:account|acct)\b"
+_ENGLISH_ACCOUNT_CONTEXT_LABEL = (
+    rf"(?:{_ENGLISH_ACCOUNT_CONTEXT_EXACT_LABEL}|"
+    rf"{_ENGLISH_ACCOUNT_CONTEXT_BARE_LABEL})"
+)
+_CARD_CONTEXT_LABEL = (
+    r"card(?:[_-](?:number|no\.?)|\s+(?:number|no\.?))?|card\b"
+)
+_EXPLICIT_CONTEXT_SEPARATOR = r"(?:为|是|is|=|:|：|#)"
+_CHINESE_CONTEXT_SEPARATOR = rf"\s*{_EXPLICIT_CONTEXT_SEPARATOR}?\s*"
+_ENGLISH_CONTEXT_SEPARATOR = rf"(?:\s*{_EXPLICIT_CONTEXT_SEPARATOR}\s*|\s+)"
+
 _ACCOUNT_CONTEXT_KEY_PATTERN = re.compile(
-    r"^\s*(?:"
-    r"(?:账户|账号)(?:[_\s-]*(?:id|number|no\.?|编号|号码|号))?|"
-    r"(?:account|acct)(?:[_\s-]*(?:id|number|no\.?))?"
-    r")\s*$",
+    rf"^\s*(?:{_CHINESE_ACCOUNT_CONTEXT_LABEL}|"
+    rf"\b{_ENGLISH_ACCOUNT_CONTEXT_LABEL})\s*$",
     re.IGNORECASE,
 )
 _ACCOUNT_CONTEXT_VALUE_KEY_PATTERN = re.compile(
-    r"^\s*(?:"
-    r"(?:账户|账号)(?:[_\s-]*(?:id|number|no\.?|编号|号码|号))?|"
-    r"(?:account|acct)(?:[_\s-]*(?:id|number|no\.?))?|"
-    r"card(?:[_\s-]*(?:number|no\.?))?"
-    r")\s*(?:为|是|is|=|:|：|#)?\s*\S+",
+    rf"^\s*(?:"
+    rf"{_CHINESE_ACCOUNT_CONTEXT_LABEL}{_CHINESE_CONTEXT_SEPARATOR}|"
+    rf"\b(?:{_ENGLISH_ACCOUNT_CONTEXT_LABEL}|{_CARD_CONTEXT_LABEL})"
+    rf"{_ENGLISH_CONTEXT_SEPARATOR}"
+    rf")\S+",
     re.IGNORECASE,
 )
 

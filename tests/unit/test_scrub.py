@@ -91,6 +91,21 @@ def test_scrub_text_redacts_account_variants() -> None:
         assert raw_value not in scrubbed
 
 
+def test_scrub_text_does_not_redact_account_prefixed_words() -> None:
+    samples = [
+        "accounting2024",
+        "accountability-2024",
+        "accounting2024=acct_123456",
+        "accountability-2024: acct_123456",
+    ]
+
+    for source in samples:
+        scrubbed = scrub_text(source)
+
+        assert scrubbed == source
+        assert "[REDACTED_ACCOUNT]" not in scrubbed
+
+
 def test_scrub_request_redacts_labeled_account_ids_in_messages_and_metadata_keys() -> None:
     messages = [
         {
@@ -211,6 +226,22 @@ def test_scrub_request_redacts_nested_values_under_labeled_account_id_keys() -> 
         "cn-related_acct-789",
     ]:
         assert raw_value not in scrubbed.sanitized_input
+
+
+def test_scrub_request_does_not_treat_account_prefixed_metadata_keys_as_context() -> None:
+    messages = [{"role": "user", "content": "ok"}]
+    metadata = {
+        "accounting2024": {"value": "acct_123456"},
+        "accountability-2024": [{"value": "related-acct_789"}],
+    }
+
+    scrubbed = scrub_request(messages, metadata)
+    payload = json.loads(scrubbed.sanitized_input)
+
+    assert payload["metadata"] == metadata
+    assert "acct_123456" in scrubbed.sanitized_input
+    assert "related-acct_789" in scrubbed.sanitized_input
+    assert "[REDACTED_ACCOUNT]" not in scrubbed.sanitized_input
 
 
 def test_scrub_text_redacts_compact_chinese_fields_without_losing_account_label() -> None:
