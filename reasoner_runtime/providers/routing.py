@@ -45,14 +45,30 @@ def select_provider(
 
 def classify_failure(error: Exception, context: dict[str, Any]) -> FailureClass:
     failure_source = context.get("failure_source") or context.get("phase")
+    if isinstance(error, (NoAvailableProviderError, ProviderConfigError)):
+        return FailureClass.infra_level
+    if _is_litellm_infra_error(error):
+        return FailureClass.infra_level
+    if isinstance(error, (ConnectionError, TimeoutError)):
+        return FailureClass.infra_level
     if isinstance(error, ParseValidationError) or (
         failure_source == "parse" and isinstance(error, (ValueError, ValidationError))
     ):
         return FailureClass.task_level
-    if isinstance(error, (NoAvailableProviderError, ProviderConfigError)):
-        return FailureClass.infra_level
-    if isinstance(error, (ConnectionError, TimeoutError)):
-        return FailureClass.infra_level
     if isinstance(error, ValidationError):
         return FailureClass.infra_level
     return FailureClass.infra_level
+
+
+def _is_litellm_infra_error(error: Exception) -> bool:
+    infra_error_names = {
+        "APIConnectionError",
+        "APITimeoutError",
+        "AuthenticationError",
+        "BudgetExceededError",
+        "InternalServerError",
+        "RateLimitError",
+        "ServiceUnavailableError",
+        "Timeout",
+    }
+    return any(cls.__name__ in infra_error_names for cls in type(error).mro())
