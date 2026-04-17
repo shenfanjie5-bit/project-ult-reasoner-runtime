@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from decimal import Decimal
 from time import perf_counter
 
 from reasoner_runtime.config import ScrubRule, ScrubRuleSet
@@ -193,6 +194,30 @@ def test_scrub_request_redacts_nested_account_labeled_metadata_values() -> None:
         assert raw_value not in scrubbed.sanitized_input
 
 
+def test_scrub_request_redacts_numeric_account_labeled_metadata_values() -> None:
+    messages = [{"role": "user", "content": "ok"}]
+    metadata = {
+        "account_id": 1234567890123456,
+        "account number": [{"value": 6222021234567890123}],
+        "acct": [Decimal("1234567890123456"), 1234567890123456.0],
+    }
+
+    scrubbed = scrub_request(messages, metadata)
+    payload = json.loads(scrubbed.sanitized_input)
+
+    assert payload["metadata"]["account_id"] == "[REDACTED_ACCOUNT]"
+    assert payload["metadata"]["account number"][0]["value"] == "[REDACTED_ACCOUNT]"
+    assert payload["metadata"]["acct"] == [
+        "[REDACTED_ACCOUNT]",
+        "[REDACTED_ACCOUNT]",
+    ]
+    for raw_value in [
+        "1234567890123456",
+        "6222021234567890123",
+    ]:
+        assert raw_value not in scrubbed.sanitized_input
+
+
 def test_scrub_request_redacts_nested_values_under_labeled_account_id_keys() -> None:
     messages = [{"role": "user", "content": "ok"}]
     metadata = {
@@ -222,6 +247,37 @@ def test_scrub_request_redacts_nested_values_under_labeled_account_id_keys() -> 
         "acct_123456",
         "related-acct_789",
         "child-acct_456",
+        "cn-acct_123456",
+        "cn-related_acct-789",
+    ]:
+        assert raw_value not in scrubbed.sanitized_input
+
+
+def test_scrub_request_redacts_nested_values_under_prefixed_account_id_keys() -> None:
+    messages = [{"role": "user", "content": "ok"}]
+    metadata = {
+        "source account_id=acct_123456": {
+            "value": "related-acct_789",
+        },
+        "用户 账号ID：cn-acct_123456": {
+            "history": [{"value": "cn-related_acct-789"}],
+        },
+    }
+
+    scrubbed = scrub_request(messages, metadata)
+    payload = json.loads(scrubbed.sanitized_input)
+
+    assert (
+        payload["metadata"]["source account_id=[REDACTED_ACCOUNT]"]["value"]
+        == "[REDACTED_ACCOUNT]"
+    )
+    assert (
+        payload["metadata"]["用户 账号ID：[REDACTED_ACCOUNT]"]["history"][0]["value"]
+        == "[REDACTED_ACCOUNT]"
+    )
+    for raw_value in [
+        "acct_123456",
+        "related-acct_789",
         "cn-acct_123456",
         "cn-related_acct-789",
     ]:
@@ -318,7 +374,7 @@ def test_scrub_payload_scrubs_string_dict_keys() -> None:
     nested = scrubbed["name [REDACTED_NAME] account [REDACTED_ACCOUNT]"]
     assert "[REDACTED_PHONE]" in nested
     assert "acct [REDACTED_ACCOUNT]" in nested["nested"]
-    assert nested[7] == "kept"
+    assert nested[7] == "[REDACTED_ACCOUNT]"
 
 
 def test_scrub_payload_preserves_colliding_sanitized_dict_keys() -> None:

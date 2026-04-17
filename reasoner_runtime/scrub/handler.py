@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, cast
 
 from reasoner_runtime.config.models import ScrubRuleSet
@@ -24,24 +25,9 @@ _ENGLISH_ACCOUNT_CONTEXT_LABEL = (
     rf"(?:{_ENGLISH_ACCOUNT_CONTEXT_EXACT_LABEL}|"
     rf"{_ENGLISH_ACCOUNT_CONTEXT_BARE_LABEL})"
 )
-_CARD_CONTEXT_LABEL = (
-    r"card(?:[_-](?:number|no\.?)|\s+(?:number|no\.?))?|card\b"
-)
-_EXPLICIT_CONTEXT_SEPARATOR = r"(?:为|是|is|=|:|：|#)"
-_CHINESE_CONTEXT_SEPARATOR = rf"\s*{_EXPLICIT_CONTEXT_SEPARATOR}?\s*"
-_ENGLISH_CONTEXT_SEPARATOR = rf"(?:\s*{_EXPLICIT_CONTEXT_SEPARATOR}\s*|\s+)"
-
 _ACCOUNT_CONTEXT_KEY_PATTERN = re.compile(
     rf"^\s*(?:{_CHINESE_ACCOUNT_CONTEXT_LABEL}|"
     rf"\b{_ENGLISH_ACCOUNT_CONTEXT_LABEL})\s*$",
-    re.IGNORECASE,
-)
-_ACCOUNT_CONTEXT_VALUE_KEY_PATTERN = re.compile(
-    rf"^\s*(?:"
-    rf"{_CHINESE_ACCOUNT_CONTEXT_LABEL}{_CHINESE_CONTEXT_SEPARATOR}|"
-    rf"\b(?:{_ENGLISH_ACCOUNT_CONTEXT_LABEL}|{_CARD_CONTEXT_LABEL})"
-    rf"{_ENGLISH_CONTEXT_SEPARATOR}"
-    rf")\S+",
     re.IGNORECASE,
 )
 
@@ -70,9 +56,11 @@ def _scrub_payload(
     account_rule_enabled: bool,
     redact_account_value: bool,
 ) -> Any:
-    if isinstance(value, str):
-        if redact_account_value and account_rule_enabled:
+    if redact_account_value and account_rule_enabled:
+        if isinstance(value, str) or _is_numeric_account_value(value):
             return REDACTED_ACCOUNT
+
+    if isinstance(value, str):
         return scrub_text(value, rule_set)
     if isinstance(value, dict):
         scrubbed: dict[Any, Any] = {}
@@ -126,8 +114,11 @@ def _is_account_context_key(key: str, scrubbed_key: Any | None = None) -> bool:
         isinstance(scrubbed_key, str)
         and REDACTED_ACCOUNT not in key
         and REDACTED_ACCOUNT in scrubbed_key
-        and bool(_ACCOUNT_CONTEXT_VALUE_KEY_PATTERN.match(key))
     )
+
+
+def _is_numeric_account_value(value: Any) -> bool:
+    return isinstance(value, (int, float, Decimal)) and not isinstance(value, bool)
 
 
 def _unique_scrubbed_key(key: Any, scrubbed: dict[Any, Any]) -> Any:
