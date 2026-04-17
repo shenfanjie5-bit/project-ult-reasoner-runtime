@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Mapping
 from json import JSONDecodeError
 from pathlib import Path
@@ -10,7 +9,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ValidationError as PydanticValidationError
 
 from reasoner_runtime.config.loader import load_provider_profiles
-from reasoner_runtime.config.models import ProviderProfile
+from reasoner_runtime.config.models import ProviderProfile, ScrubRuleSet
 from reasoner_runtime.core.models import ReasonerRequest, StructuredGenerationResult
 from reasoner_runtime.providers import (
     ParseValidationError,
@@ -22,7 +21,7 @@ from reasoner_runtime.replay import (
     build_llm_lineage,
     build_replay_bundle,
 )
-from reasoner_runtime.scrub import scrub_input
+from reasoner_runtime.scrub import scrub_request
 from reasoner_runtime.structured import resolve_response_model, run_structured_call
 
 
@@ -37,6 +36,7 @@ def generate_structured(
     provider_profiles: list[ProviderProfile] | None = None,
     provider_config_path: Path | None = None,
     client_factory: ClientFactory = build_client,
+    scrub_rule_set: ScrubRuleSet | None = None,
 ) -> StructuredGenerationResult:
     """Generate structured output through the configured provider boundary.
 
@@ -50,6 +50,7 @@ def generate_structured(
         provider_profiles=provider_profiles,
         provider_config_path=provider_config_path,
         client_factory=client_factory,
+        scrub_rule_set=scrub_rule_set,
     )
     return result
 
@@ -61,6 +62,7 @@ def generate_structured_with_replay(
     client_factory: ClientFactory = build_client,
     *,
     provider_config_path: Path | None = None,
+    scrub_rule_set: ScrubRuleSet | None = None,
 ) -> tuple[StructuredGenerationResult, ReplayBundle]:
     if schema_registry is None:
         raise TypeError("schema_registry is required")
@@ -71,6 +73,7 @@ def generate_structured_with_replay(
         provider_profiles=provider_profiles,
         provider_config_path=provider_config_path,
         client_factory=client_factory,
+        scrub_rule_set=scrub_rule_set,
     )
 
 
@@ -81,6 +84,7 @@ def _generate_structured_with_replay_impl(
     provider_profiles: list[ProviderProfile] | None,
     provider_config_path: Path | None,
     client_factory: ClientFactory,
+    scrub_rule_set: ScrubRuleSet | None,
 ) -> tuple[StructuredGenerationResult, ReplayBundle]:
     normalized_request = _normalize_request(request)
     profiles = _resolve_provider_profiles(
@@ -89,10 +93,13 @@ def _generate_structured_with_replay_impl(
         provider_config_path=provider_config_path,
     )
 
-    sanitized_messages = scrub_input(normalized_request.messages)
-    sanitized_input = _serialize_sanitized_input(sanitized_messages)
+    scrubbed = scrub_request(
+        normalized_request.messages,
+        normalized_request.metadata,
+        scrub_rule_set,
+    )
     runtime_request = normalized_request.model_copy(
-        update={"messages": sanitized_messages}
+        update={"messages": scrubbed.messages, "metadata": scrubbed.metadata}
     )
 
     response_model = resolve_response_model(
@@ -142,7 +149,7 @@ def _generate_structured_with_replay_impl(
 
     lineage = build_llm_lineage(result)
     replay_bundle = build_replay_bundle(
-        sanitized_input,
+        scrubbed.sanitized_input,
         final_raw_output,
         result.parsed_result,
         lineage,
@@ -202,15 +209,6 @@ def _normalize_request(request: ReasonerRequest) -> ReasonerRequest:
         return request
 
     return request.model_copy(update={"request_id": str(uuid4())})
-
-
-def _serialize_sanitized_input(messages: list[dict[str, Any]]) -> str:
-    return json.dumps(
-        messages,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
 
 
 def _parse_error_from_instructor_retry(error: Exception) -> ParseValidationError | None:

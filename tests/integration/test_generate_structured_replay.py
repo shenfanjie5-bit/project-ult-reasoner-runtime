@@ -70,7 +70,10 @@ def test_generate_structured_with_replay_returns_result_and_bundle() -> None:
     assert bundle.parsed_result == result.parsed_result
     assert bundle.output_hash == sha256_text(raw_output)
     assert bundle.input_hash == sha256_text(bundle.sanitized_input)
-    assert json.loads(bundle.sanitized_input) == _request().messages
+    assert json.loads(bundle.sanitized_input) == {
+        "messages": _request().messages,
+        "metadata": {},
+    }
     assert bundle.llm_lineage == {
         "provider": result.actual_provider,
         "model": result.actual_model,
@@ -96,7 +99,7 @@ def test_generate_structured_with_replay_hashes_provider_sanitized_messages() ->
                 "role": "user",
                 "content": (
                     "name is Ada Lovelace, phone 415-555-2671, "
-                    "account acct_123456"
+                    "account 123456789012"
                 ),
             }
         ]
@@ -109,19 +112,20 @@ def test_generate_structured_with_replay_hashes_provider_sanitized_messages() ->
         client_factory=lambda _profile, _max_retries: client,
     )
 
-    sanitized_messages = json.loads(bundle.sanitized_input)
-    serialized_client_messages = json.dumps(
-        client.calls[0]["messages"],
+    sanitized_payload = json.loads(bundle.sanitized_input)
+    serialized_client_payload = json.dumps(
+        {"messages": client.calls[0]["messages"], "metadata": {}},
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
     )
+    sanitized_messages = sanitized_payload["messages"]
     assert client.calls[0]["messages"] == sanitized_messages
-    assert serialized_client_messages == bundle.sanitized_input
+    assert serialized_client_payload == bundle.sanitized_input
     assert bundle.input_hash == sha256_text(bundle.sanitized_input)
     assert "Ada Lovelace" not in bundle.sanitized_input
     assert "415-555-2671" not in bundle.sanitized_input
-    assert "acct_123456" not in bundle.sanitized_input
+    assert "123456789012" not in bundle.sanitized_input
     assert sanitized_messages != request.messages
 
 
