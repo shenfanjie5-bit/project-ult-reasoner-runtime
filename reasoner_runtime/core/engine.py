@@ -22,6 +22,7 @@ from reasoner_runtime.replay import (
     build_llm_lineage,
     build_replay_bundle,
 )
+from reasoner_runtime.scrub import scrub_input
 from reasoner_runtime.structured import resolve_response_model, run_structured_call
 
 
@@ -88,11 +89,10 @@ def _generate_structured_with_replay_impl(
         provider_config_path=provider_config_path,
     )
 
-    # scrub: #19 will replace this pass-through with scrub_input().
-    _sanitized_messages = normalized_request.messages
-    _sanitized_input = _serialize_sanitized_input(_sanitized_messages)
+    sanitized_messages = scrub_input(normalized_request.messages)
+    sanitized_input = _serialize_sanitized_input(sanitized_messages)
     runtime_request = normalized_request.model_copy(
-        update={"messages": _sanitized_messages}
+        update={"messages": sanitized_messages}
     )
 
     response_model = resolve_response_model(
@@ -142,7 +142,7 @@ def _generate_structured_with_replay_impl(
 
     lineage = build_llm_lineage(result)
     replay_bundle = build_replay_bundle(
-        _sanitized_input,
+        sanitized_input,
         final_raw_output,
         result.parsed_result,
         lineage,
