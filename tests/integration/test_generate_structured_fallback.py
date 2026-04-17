@@ -3,10 +3,17 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from pydantic import BaseModel
+import pytest
+from instructor.core import FailedAttempt, InstructorRetryException
+from pydantic import BaseModel, ValidationError
 
 from reasoner_runtime.config import ProviderProfile
 from reasoner_runtime.core import ReasonerRequest, generate_structured
+from reasoner_runtime.providers import (
+    FailureClass,
+    FallbackExecutionError,
+    ParseValidationError,
+)
 from reasoner_runtime.providers.client import LiteLLMInstructorClient
 
 
@@ -162,6 +169,40 @@ def test_generate_structured_uses_single_instructor_attempt_per_parse_retry() ->
     assert result.retry_count == 2
 
 
+def test_generate_structured_retries_instructor_validation_exhaustion() -> None:
+    primary = ProviderProfile(provider="openai", model="gpt-4", fallback_priority=0)
+    completions = _InstructorRetryCompletions()
+    instructor_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=completions),
+    )
+    client_factory_calls: list[tuple[ProviderProfile, int]] = []
+
+    def client_factory(profile: ProviderProfile, max_retries: int) -> Any:
+        client_factory_calls.append((profile, max_retries))
+        return LiteLLMInstructorClient(
+            profile=profile,
+            max_retries=max_retries,
+            litellm_model=f"{profile.provider}/{profile.model}",
+            instructor_client=instructor_client,
+        )
+
+    with pytest.raises(FallbackExecutionError) as error:
+        generate_structured(
+            _request(max_retries=2),
+            schema_registry={"FallbackPayload": FallbackPayload},
+            provider_profiles=[primary],
+            client_factory=client_factory,
+        )
+
+    assert client_factory_calls == [(primary, 1), (primary, 1), (primary, 1)]
+    assert len(completions.calls) == 3
+    assert [call["max_retries"] for call in completions.calls] == [1, 1, 1]
+    assert error.value.decision.failure_class is FailureClass.task_level
+    assert error.value.decision.attempts == ["openai/gpt-4"]
+    assert error.value.decision.final_target == "openai/gpt-4"
+    assert isinstance(error.value.last_error, ParseValidationError)
+
+
 def test_generate_structured_normalizes_provider_qualified_fallback_path() -> None:
     profile = ProviderProfile(
         provider="openai",
@@ -231,9 +272,34 @@ class _RetryCompletions:
         return self.responses.pop(0)
 
 
+class _InstructorRetryCompletions:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def create_with_completion(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        validation_error = _fallback_payload_validation_error()
+        raise InstructorRetryException(
+            validation_error,
+            n_attempts=1,
+            total_usage=0,
+            create_kwargs=kwargs,
+            failed_attempts=[FailedAttempt(1, validation_error)],
+        )
+
+
 class _StaticCompletions:
     def __init__(self, payload: FallbackPayload) -> None:
         self.payload = payload
 
     def create_with_completion(self, **kwargs: Any) -> Any:
         return self.payload
+
+
+def _fallback_payload_validation_error() -> ValidationError:
+    try:
+        FallbackPayload.model_validate({"answer": "missing confidence"})
+    except ValidationError as error:
+        return error
+
+    raise AssertionError("expected invalid FallbackPayload to fail validation")
