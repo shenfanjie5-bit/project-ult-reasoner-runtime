@@ -105,7 +105,14 @@ def test_generate_structured_with_replay_installs_configured_callbacks(
 
     assert fake_litellm.success_callback == []
     assert fake_litellm.failure_callback == []
-    error_context, error = recorder.errors[0]
+    assert any(
+        error.error_type == "ConnectionError" for _context, error in recorder.errors
+    )
+    error_context, error = next(
+        (context, error)
+        for context, error in recorder.errors
+        if error.error_type == "FallbackExecutionError"
+    )
     assert error_context.request_id == "req-callback-error"
     assert error_context.provider == "openai"
     assert error_context.model == "gpt-4"
@@ -145,7 +152,7 @@ def test_generate_structured_with_replay_does_not_reuse_callback_backend(
         callback_config_path=callback_config_path,
     )
 
-    assert [context.request_id for context, _success in recorder.successes] == [
+    assert _terminal_success_request_ids(recorder) == [
         "req-callback-enabled"
     ]
     assert fake_litellm.success_callback == []
@@ -161,7 +168,7 @@ def test_generate_structured_with_replay_does_not_reuse_callback_backend(
         ),
     )
 
-    assert [context.request_id for context, _success in recorder.successes] == [
+    assert _terminal_success_request_ids(recorder) == [
         "req-callback-enabled"
     ]
     assert fake_litellm.success_callback == []
@@ -178,7 +185,7 @@ def test_generate_structured_with_replay_does_not_reuse_callback_backend(
         callback_config_path=callback_config_path,
     )
 
-    assert [context.request_id for context, _success in recorder.successes] == [
+    assert _terminal_success_request_ids(recorder) == [
         "req-callback-enabled",
         "req-callback-enabled-again",
     ]
@@ -196,7 +203,7 @@ def test_generate_structured_with_replay_does_not_reuse_callback_backend(
         callback_profile=CallbackProfile(backend="none", enabled=False),
     )
 
-    assert [context.request_id for context, _success in recorder.successes] == [
+    assert _terminal_success_request_ids(recorder) == [
         "req-callback-enabled",
         "req-callback-enabled-again",
     ]
@@ -225,7 +232,12 @@ class _CallbackClient:
         if self.mode == "error":
             error = ConnectionError("provider unavailable")
             for handler in list(self.litellm_module.failure_callback):
-                handler({**callback_kwargs, "exception": error}, None, 100.0, 100.013)
+                handler(
+                    {**callback_kwargs, "exception": error},
+                    None,
+                    100.0,
+                    100.013,
+                )
             raise error
 
         completion = SimpleNamespace(
@@ -257,3 +269,11 @@ class _RecordingBackend:
 
     def on_error(self, context: CallbackContext, error: CallbackError) -> None:
         self.errors.append((context, error))
+
+
+def _terminal_success_request_ids(backend: _RecordingBackend) -> list[str]:
+    return [
+        context.request_id
+        for context, success in backend.successes
+        if success.failure_class == "none"
+    ]

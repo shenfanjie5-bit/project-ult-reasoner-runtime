@@ -170,14 +170,30 @@ def test_switching_to_none_clears_configured_backend_effects(
             _request(),
             provider_profiles=_provider_profiles(),
             schema_registry=_schema_registry(),
-            client_factory=_client_factory(),
+            client_factory=_litellm_switching_client_factory(fake_litellm),
             callback_config_path=config_path,
         )
 
+        recorder = created[backend][0]
+        assert any(
+            context.provider == "openai" and error.error_type == "ConnectionError"
+            for context, error in recorder.errors
+        )
+        assert any(
+            context.provider == "anthropic" and success.failure_class is None
+            for context, success in recorder.successes
+        )
+        assert fake_litellm.success_callback == []
+        assert fake_litellm.failure_callback == []
+
     otel_event_counts = _event_counts(created["otel"][0])
     langfuse_event_counts = _event_counts(created["langfuse"][0])
-    assert fake_litellm.success_callback == []
-    assert fake_litellm.failure_callback == []
+
+    litellm_callbacks.configure_litellm_callbacks(
+        (created["otel"][0], created["langfuse"][0])
+    )
+    assert fake_litellm.success_callback != []
+    assert fake_litellm.failure_callback != []
 
     _write_callback_config(config_path, "none")
     callback_factory._build_callback_backends_cached.cache_clear()
@@ -185,7 +201,7 @@ def test_switching_to_none_clears_configured_backend_effects(
         _request(),
         provider_profiles=_provider_profiles(),
         schema_registry=_schema_registry(),
-        client_factory=_client_factory(),
+        client_factory=_litellm_switching_client_factory(fake_litellm),
         callback_config_path=config_path,
     )
 
@@ -254,3 +270,58 @@ def _error_dump(
 
 def _event_counts(backend: _RecordingBackend) -> tuple[int, int, int]:
     return len(backend.starts), len(backend.successes), len(backend.errors)
+
+
+def _litellm_switching_client_factory(fake_litellm: Any) -> Any:
+    def factory(profile: Any, max_retries: int) -> _LiteLLMSwitchingClient:
+        assert max_retries == 1
+        return _LiteLLMSwitchingClient(fake_litellm, profile)
+
+    return factory
+
+
+class _LiteLLMSwitchingClient:
+    def __init__(self, fake_litellm: Any, profile: Any) -> None:
+        self.fake_litellm = fake_litellm
+        self.profile = profile
+
+    def create_structured(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        response_model: type[Any],
+        callback_metadata: dict[str, Any],
+    ) -> Any:
+        metadata = {
+            "reasoner": {
+                **callback_metadata,
+                "provider": self.profile.provider,
+                "model": self.profile.model,
+            }
+        }
+        callback_kwargs = {
+            "model": f"{self.profile.provider}/{self.profile.model}",
+            "messages": messages,
+            "metadata": metadata,
+        }
+
+        if self.profile.provider == "openai":
+            error = ConnectionError("provider unavailable")
+            for handler in list(self.fake_litellm.failure_callback):
+                handler(
+                    {**callback_kwargs, "exception": error},
+                    None,
+                    100.0,
+                    100.006,
+                )
+            raise error
+
+        completion = SimpleNamespace(
+            choices=[{"message": {"content": '{"answer":"fallback-ok","score":7}'}}],
+            usage={"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+            response_cost=0.03,
+            latency_ms=19,
+        )
+        for handler in list(self.fake_litellm.success_callback):
+            handler(callback_kwargs, completion, 100.0, 100.019)
+        return response_model(answer="fallback-ok", score=7), completion
