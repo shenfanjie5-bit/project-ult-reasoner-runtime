@@ -178,6 +178,41 @@ def test_scrub_request_redacts_nested_account_labeled_metadata_values() -> None:
         assert raw_value not in scrubbed.sanitized_input
 
 
+def test_scrub_request_redacts_nested_values_under_labeled_account_id_keys() -> None:
+    messages = [{"role": "user", "content": "ok"}]
+    metadata = {
+        "account_id=acct_123456": {"value": "related-acct_789"},
+        "account acct_123456": [{"value": "child-acct_456"}],
+        "账号ID：cn-acct_123456": {
+            "history": [{"value": "cn-related_acct-789"}],
+        },
+    }
+
+    scrubbed = scrub_request(messages, metadata)
+    payload = json.loads(scrubbed.sanitized_input)
+
+    assert (
+        payload["metadata"]["account_id=[REDACTED_ACCOUNT]"]["value"]
+        == "[REDACTED_ACCOUNT]"
+    )
+    assert (
+        payload["metadata"]["account [REDACTED_ACCOUNT]"][0]["value"]
+        == "[REDACTED_ACCOUNT]"
+    )
+    assert (
+        payload["metadata"]["账号ID：[REDACTED_ACCOUNT]"]["history"][0]["value"]
+        == "[REDACTED_ACCOUNT]"
+    )
+    for raw_value in [
+        "acct_123456",
+        "related-acct_789",
+        "child-acct_456",
+        "cn-acct_123456",
+        "cn-related_acct-789",
+    ]:
+        assert raw_value not in scrubbed.sanitized_input
+
+
 def test_scrub_text_redacts_compact_chinese_fields_without_losing_account_label() -> None:
     scrubbed = scrub_text("姓名张三账户6222021234567890123手机13800138000")
 

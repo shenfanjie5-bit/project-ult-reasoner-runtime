@@ -20,6 +20,14 @@ _ACCOUNT_CONTEXT_KEY_PATTERN = re.compile(
     r")\s*$",
     re.IGNORECASE,
 )
+_ACCOUNT_CONTEXT_VALUE_KEY_PATTERN = re.compile(
+    r"^\s*(?:"
+    r"(?:账户|账号)(?:[_\s-]*(?:id|number|no\.?|编号|号码|号))?|"
+    r"(?:account|acct)(?:[_\s-]*(?:id|number|no\.?))?|"
+    r"card(?:[_\s-]*(?:number|no\.?))?"
+    r")\s*(?:为|是|is|=|:|：|#)?\s*\S+",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -53,15 +61,15 @@ def _scrub_payload(
     if isinstance(value, dict):
         scrubbed: dict[Any, Any] = {}
         for key, item in value.items():
+            scrubbed_key = scrub_text(key, rule_set) if isinstance(key, str) else key
             redact_child_account_value = (
                 redact_account_value
                 or (
                     account_rule_enabled
                     and isinstance(key, str)
-                    and _is_account_context_key(key)
+                    and _is_account_context_key(key, scrubbed_key)
                 )
             )
-            scrubbed_key = scrub_text(key, rule_set) if isinstance(key, str) else key
             output_key = _unique_scrubbed_key(scrubbed_key, scrubbed)
             scrubbed[output_key] = _scrub_payload(
                 item,
@@ -94,8 +102,16 @@ def _scrub_payload(
     return value
 
 
-def _is_account_context_key(key: str) -> bool:
-    return bool(_ACCOUNT_CONTEXT_KEY_PATTERN.match(key))
+def _is_account_context_key(key: str, scrubbed_key: Any | None = None) -> bool:
+    if bool(_ACCOUNT_CONTEXT_KEY_PATTERN.match(key)):
+        return True
+
+    return (
+        isinstance(scrubbed_key, str)
+        and REDACTED_ACCOUNT not in key
+        and REDACTED_ACCOUNT in scrubbed_key
+        and bool(_ACCOUNT_CONTEXT_VALUE_KEY_PATTERN.match(key))
+    )
 
 
 def _unique_scrubbed_key(key: Any, scrubbed: dict[Any, Any]) -> Any:
