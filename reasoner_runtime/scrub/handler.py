@@ -19,7 +19,14 @@ def scrub_payload(value: Any, rule_set: ScrubRuleSet | None = None) -> Any:
     if isinstance(value, str):
         return scrub_text(value, rule_set)
     if isinstance(value, dict):
-        return {key: scrub_payload(item, rule_set) for key, item in value.items()}
+        return {
+            (
+                scrub_text(key, rule_set)
+                if isinstance(key, str)
+                else key
+            ): scrub_payload(item, rule_set)
+            for key, item in value.items()
+        }
     if isinstance(value, list):
         return [scrub_payload(item, rule_set) for item in value]
     if isinstance(value, tuple):

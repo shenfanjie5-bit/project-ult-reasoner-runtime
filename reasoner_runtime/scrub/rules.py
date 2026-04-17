@@ -11,15 +11,24 @@ REDACTED_ACCOUNT = "[REDACTED_ACCOUNT]"
 
 _RULE_ORDER = ("name", "phone", "account")
 
+_NEXT_FIELD_BOUNDARY = (
+    r"(?=\s*(?:"
+    r"姓名|客户|联系人|手机|电话|账户|账号|"
+    r"(?i:name|customer|contact|phone|tel|telephone|account|acct|card)\b"
+    r"|[,，;；。.\n\r]|$))"
+)
+
 _NAME_PATTERNS = (
     re.compile(
         r"(?P<prefix>(?:姓名|客户|联系人)\s*(?:为|是|:|：|=)?\s*)"
-        r"(?P<value>[\u4e00-\u9fff]{2,4}|[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})"
+        r"(?P<value>[\u4e00-\u9fff]{2,4}?|[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}?)"
+        + _NEXT_FIELD_BOUNDARY
     ),
     re.compile(
         r"(?P<prefix>\b(?i:name|customer|contact)\b\s*"
         r"(?:(?i:is)|=|:|#)?\s*)"
-        r"(?P<value>[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}|[\u4e00-\u9fff]{2,4})",
+        r"(?P<value>[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}?|[\u4e00-\u9fff]{2,4}?)"
+        + _NEXT_FIELD_BOUNDARY,
     ),
 )
 

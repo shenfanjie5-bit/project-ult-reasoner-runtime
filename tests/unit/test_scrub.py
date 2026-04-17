@@ -85,6 +85,17 @@ def test_scrub_text_redacts_account_variants() -> None:
         assert raw_value not in scrubbed
 
 
+def test_scrub_text_redacts_compact_chinese_fields_without_losing_account_label() -> None:
+    scrubbed = scrub_text("姓名张三账户6222021234567890123手机13800138000")
+
+    assert scrubbed == (
+        "姓名[REDACTED_NAME]账户[REDACTED_ACCOUNT]手机[REDACTED_PHONE]"
+    )
+    assert "张三" not in scrubbed
+    assert "6222021234567890123" not in scrubbed
+    assert "13800138000" not in scrubbed
+
+
 def test_scrub_text_respects_disabled_rules() -> None:
     rule_set = ScrubRuleSet(
         rules=[
@@ -127,6 +138,30 @@ def test_scrub_payload_recurses_without_mutating_input() -> None:
     assert "123456789012" not in json.dumps(scrubbed, ensure_ascii=False)
 
 
+def test_scrub_payload_scrubs_string_dict_keys() -> None:
+    payload = {
+        "name Alice account 123456789012": {
+            "13800138000": "ok",
+            "nested": {"acct 999988887777": "姓名 张三"},
+            7: "kept",
+        }
+    }
+
+    scrubbed = scrub_payload(payload)
+    serialized = json.dumps(scrubbed, ensure_ascii=False)
+
+    assert "Alice" not in serialized
+    assert "123456789012" not in serialized
+    assert "13800138000" not in serialized
+    assert "999988887777" not in serialized
+    assert "张三" not in serialized
+    assert "name [REDACTED_NAME] account [REDACTED_ACCOUNT]" in scrubbed
+    nested = scrubbed["name [REDACTED_NAME] account [REDACTED_ACCOUNT]"]
+    assert "[REDACTED_PHONE]" in nested
+    assert "acct [REDACTED_ACCOUNT]" in nested["nested"]
+    assert nested[7] == "kept"
+
+
 def test_scrub_request_builds_deterministic_sanitized_input() -> None:
     messages = [
         {"role": "system", "content": "保持结构化输出"},
@@ -150,6 +185,32 @@ def test_scrub_request_builds_deterministic_sanitized_input() -> None:
     assert "138-0013-8000" not in first.sanitized_input
     assert "6222021234567890123" not in first.sanitized_input
     assert "Alice" not in first.sanitized_input
+
+
+def test_scrub_request_scrubs_metadata_keys_before_serialization() -> None:
+    messages = [{"role": "user", "content": "ok"}]
+    metadata = {
+        "name Alice account 123456789012": "value",
+        "nested": {
+            "13800138000": {
+                "acct 999988887777": "kept",
+            }
+        },
+    }
+
+    scrubbed = scrub_request(messages, metadata)
+    payload = json.loads(scrubbed.sanitized_input)
+
+    assert "Alice" not in scrubbed.sanitized_input
+    assert "123456789012" not in scrubbed.sanitized_input
+    assert "13800138000" not in scrubbed.sanitized_input
+    assert "999988887777" not in scrubbed.sanitized_input
+    assert "name [REDACTED_NAME] account [REDACTED_ACCOUNT]" in payload["metadata"]
+    assert "[REDACTED_PHONE]" in payload["metadata"]["nested"]
+    assert (
+        "acct [REDACTED_ACCOUNT]"
+        in payload["metadata"]["nested"]["[REDACTED_PHONE]"]
+    )
 
 
 def test_scrub_input_is_sanitized_input_wrapper() -> None:
