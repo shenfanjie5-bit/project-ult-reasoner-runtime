@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from inspect import Parameter, signature
 from time import perf_counter
 from typing import Annotated, Any
 
@@ -50,6 +51,7 @@ def run_structured_call(
         client,
         messages=request.messages,
         response_model=response_model,
+        callback_metadata=_build_callback_metadata(request),
     )
     if isinstance(client_response, StructuredCallResult):
         return client_response
@@ -72,11 +74,17 @@ def _invoke_client(
     *,
     messages: list[dict[str, Any]],
     response_model: type[BaseModel],
+    callback_metadata: dict[str, Any],
 ) -> Any:
     if hasattr(client, "create_structured"):
-        return client.create_structured(
-            messages=messages,
-            response_model=response_model,
+        return _call_with_optional_metadata(
+            client.create_structured,
+            {
+                "messages": messages,
+                "response_model": response_model,
+            },
+            "callback_metadata",
+            callback_metadata,
         )
 
     try:
@@ -87,15 +95,63 @@ def _invoke_client(
         ) from error
 
     if hasattr(completions, "create_with_completion"):
-        return completions.create_with_completion(
-            messages=messages,
-            response_model=response_model,
+        return _call_with_optional_metadata(
+            completions.create_with_completion,
+            {
+                "messages": messages,
+                "response_model": response_model,
+            },
+            "metadata",
+            {"reasoner": callback_metadata},
         )
 
-    return completions.create(
-        messages=messages,
-        response_model=response_model,
+    return _call_with_optional_metadata(
+        completions.create,
+        {
+            "messages": messages,
+            "response_model": response_model,
+        },
+        "metadata",
+        {"reasoner": callback_metadata},
     )
+
+
+def _build_callback_metadata(request: ReasonerRequest) -> dict[str, Any]:
+    return {
+        "request_id": request.request_id,
+        "caller_module": request.caller_module,
+        "target_schema": request.target_schema,
+        "provider": request.configured_provider,
+        "model": request.configured_model,
+    }
+
+
+def _call_with_optional_metadata(
+    call_fn: Any,
+    kwargs: dict[str, Any],
+    metadata_key: str,
+    metadata_value: Any,
+) -> Any:
+    if _supports_keyword(call_fn, metadata_key):
+        kwargs = {**kwargs, metadata_key: metadata_value}
+    return call_fn(**kwargs)
+
+
+def _supports_keyword(call_fn: Any, keyword: str) -> bool:
+    try:
+        parameters = signature(call_fn).parameters.values()
+    except (TypeError, ValueError):
+        return False
+
+    for parameter in parameters:
+        if parameter.kind is Parameter.VAR_KEYWORD:
+            return True
+        if parameter.name == keyword and parameter.kind in {
+            Parameter.KEYWORD_ONLY,
+            Parameter.POSITIONAL_OR_KEYWORD,
+        }:
+            return True
+    return False
 
 
 def _split_client_response(response: Any) -> tuple[Any, Any | None]:

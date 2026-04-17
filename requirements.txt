@@ -3,3 +3,18 @@ litellm==1.83.0 \
 
 instructor==1.15.1 \
     --hash=sha256:86a1929e681667f57e98efa8b8f699b5c67e439d5a9e882fe310de4ace93cf97
+
+opentelemetry-api==1.31.1 \
+    --hash=sha256:1511a3f470c9c8a32eeea68d4ea37835880c0eed09dd1a0187acc8b1301da0a1
+
+deprecated==1.2.18 \
+    --hash=sha256:bd5011788200372a32418f888e326a09ff80d0214bd961147cfed01b5c018eec
+
+importlib-metadata==8.6.1 \
+    --hash=sha256:02a89390c1e15fdfdc0d7c6b25cb3e62650d0494005c97d6f148bf5b9787525e
+
+wrapt==1.17.2 \
+    --hash=sha256:b18f2d1533a71f069c7f82d524a52599053d4c7166e9dd374ae2136b7f40f7c8
+
+zipp==3.23.0 \
+    --hash=sha256:071652d6115ed432f5ce1d34c336c0adfd6a884660d1e9712a256d3d3bd4b14e
