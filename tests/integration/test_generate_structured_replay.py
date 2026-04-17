@@ -21,16 +21,18 @@ class ReplayPayload(BaseModel):
     score: int
 
 
-def _request() -> ReasonerRequest:
-    return ReasonerRequest(
-        request_id="req-replay",
-        caller_module="integration-test",
-        target_schema="ReplayPayload",
-        messages=[{"role": "user", "content": "return a replay payload"}],
-        configured_provider="openai",
-        configured_model="gpt-4",
-        max_retries=2,
-    )
+def _request(**overrides: Any) -> ReasonerRequest:
+    payload = {
+        "request_id": "req-replay",
+        "caller_module": "integration-test",
+        "target_schema": "ReplayPayload",
+        "messages": [{"role": "user", "content": "return a replay payload"}],
+        "configured_provider": "openai",
+        "configured_model": "gpt-4",
+        "max_retries": 2,
+    }
+    payload.update(overrides)
+    return ReasonerRequest(**payload)
 
 
 def test_generate_structured_with_replay_returns_result_and_bundle() -> None:
@@ -77,6 +79,50 @@ def test_generate_structured_with_replay_returns_result_and_bundle() -> None:
         "fallback_path": result.fallback_path,
         "retry_count": result.retry_count,
     }
+
+
+def test_replay_hashes_same_sanitized_messages_sent_to_client() -> None:
+    profile = ProviderProfile(provider="openai", model="gpt-4", fallback_priority=0)
+    raw_content = (
+        "My name is Alice Smith, phone 415-555-1234, "
+        "account: ACCT-998877."
+    )
+    request = _request(messages=[{"role": "user", "content": raw_content}])
+    client = _FakeStructuredClient(
+        StructuredCallResult(
+            parsed_result={"answer": "ok", "score": 7},
+            raw_output='{"answer":"ok","score":7}',
+            token_usage={"prompt": 3, "completion": 4, "total": 7},
+            cost_estimate=0.02,
+            latency_ms=11,
+        )
+    )
+
+    _result, bundle = generate_structured_with_replay(
+        request,
+        provider_profiles=[profile],
+        schema_registry={"ReplayPayload": ReplayPayload},
+        client_factory=lambda _profile, _max_retries: client,
+    )
+
+    sent_messages = client.calls[0]["messages"]
+    serialized_sent_messages = json.dumps(
+        sent_messages,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+    assert bundle.sanitized_input == serialized_sent_messages
+    assert bundle.input_hash == sha256_text(serialized_sent_messages)
+    assert json.loads(bundle.sanitized_input) == sent_messages
+    assert sent_messages != request.messages
+    assert "Alice Smith" not in bundle.sanitized_input
+    assert "415-555-1234" not in bundle.sanitized_input
+    assert "ACCT-998877" not in bundle.sanitized_input
+    assert "[REDACTED_NAME]" in bundle.sanitized_input
+    assert "[REDACTED_PHONE]" in bundle.sanitized_input
+    assert "[REDACTED_ACCOUNT]" in bundle.sanitized_input
 
 
 def test_generate_structured_keeps_structured_result_return_type() -> None:
