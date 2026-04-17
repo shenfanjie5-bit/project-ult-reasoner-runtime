@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,11 @@ from reasoner_runtime.config.loader import load_provider_profiles
 from reasoner_runtime.config.models import ProviderProfile
 from reasoner_runtime.core.models import ReasonerRequest, StructuredGenerationResult
 from reasoner_runtime.providers import build_client, select_provider
+from reasoner_runtime.replay import (
+    ReplayBundle,
+    build_llm_lineage,
+    build_replay_bundle,
+)
 from reasoner_runtime.structured import resolve_response_model, run_structured_call
 
 
@@ -31,6 +37,28 @@ def generate_structured(
     path. Without either, the configured request target is converted into a
     single profile to preserve the provider boundary.
     """
+    result, _replay_bundle = generate_structured_with_replay(
+        request,
+        schema_registry=schema_registry,
+        provider_profiles=provider_profiles,
+        provider_config_path=provider_config_path,
+        client_factory=client_factory,
+    )
+    return result
+
+
+def generate_structured_with_replay(
+    request: ReasonerRequest,
+    provider_profiles: list[ProviderProfile] | None = None,
+    schema_registry: Mapping[str, type[BaseModel]] | None = None,
+    *,
+    provider_config_path: Path | None = None,
+    client_factory: ClientFactory = build_client,
+) -> tuple[StructuredGenerationResult, ReplayBundle]:
+    """Generate structured output and the replay bundle for the same call."""
+    if schema_registry is None:
+        raise TypeError("schema_registry is required")
+
     normalized_request = _normalize_request(request)
     profiles = _resolve_provider_profiles(
         normalized_request,
@@ -45,7 +73,7 @@ def generate_structured(
     client = client_factory(selected_profile, normalized_request.max_retries)
 
     # scrub: #19 will replace this pass-through with scrub_input().
-    _sanitized_messages = normalized_request.messages
+    _sanitized_input = _serialize_sanitized_messages(normalized_request.messages)
 
     actual_provider = selected_profile.provider
     actual_model = selected_profile.model
@@ -57,10 +85,7 @@ def generate_structured(
     call_result = run_structured_call(client, normalized_request, response_model)
     _raw_output = call_result.raw_output
 
-    # bundle: #17 will build the replay bundle from sanitized input and output.
-    _replay_bundle = None
-
-    return StructuredGenerationResult(
+    result = StructuredGenerationResult(
         parsed_result=call_result.parsed_result,
         actual_provider=actual_provider,
         actual_model=actual_model,
@@ -69,6 +94,15 @@ def generate_structured(
         cost_estimate=call_result.cost_estimate,
         latency_ms=call_result.latency_ms,
     )
+    lineage = build_llm_lineage(result)
+    replay_bundle = build_replay_bundle(
+        _sanitized_input,
+        _raw_output,
+        result.parsed_result,
+        lineage,
+    )
+
+    return result, replay_bundle
 
 
 def _resolve_provider_profiles(
@@ -127,3 +161,12 @@ def _normalize_request(request: ReasonerRequest) -> ReasonerRequest:
 
 def _format_target(profile: ProviderProfile) -> str:
     return f"{profile.provider}/{profile.model}"
+
+
+def _serialize_sanitized_messages(messages: list[dict[str, Any]]) -> str:
+    return json.dumps(
+        messages,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
