@@ -2,16 +2,21 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
+from json import JSONDecodeError
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError as PydanticValidationError
 
 from reasoner_runtime.config.loader import load_provider_profiles
 from reasoner_runtime.config.models import ProviderProfile
 from reasoner_runtime.core.models import ReasonerRequest, StructuredGenerationResult
-from reasoner_runtime.providers import build_client, execute_with_fallback
+from reasoner_runtime.providers import (
+    ParseValidationError,
+    build_client,
+    execute_with_fallback,
+)
 from reasoner_runtime.replay import (
     ReplayBundle,
     build_llm_lineage,
@@ -21,6 +26,7 @@ from reasoner_runtime.structured import resolve_response_model, run_structured_c
 
 
 ClientFactory = Callable[[ProviderProfile, int], Any]
+_INSTRUCTOR_ATTEMPTS_PER_FALLBACK_RETRY = 1
 
 
 def generate_structured(
@@ -98,12 +104,22 @@ def _generate_structured_with_replay_impl(
     def call_provider(
         call_request: ReasonerRequest,
         profile: ProviderProfile,
-        _parse_retry_index: int,
+        parse_retry_index: int,
     ) -> StructuredGenerationResult:
         nonlocal final_raw_output
 
-        client = client_factory(profile, call_request.max_retries)
-        call_result = run_structured_call(client, call_request, response_model)
+        if parse_retry_index < 0:
+            raise ValueError("parse_retry_index must be greater than or equal to 0")
+
+        # execute_with_fallback owns request.max_retries; Instructor gets one attempt.
+        client = client_factory(profile, _INSTRUCTOR_ATTEMPTS_PER_FALLBACK_RETRY)
+        try:
+            call_result = run_structured_call(client, call_request, response_model)
+        except Exception as error:
+            parse_error = _parse_error_from_instructor_retry(error)
+            if parse_error is not None:
+                raise parse_error from error
+            raise
         final_raw_output = call_result.raw_output
 
         return StructuredGenerationResult(
@@ -195,3 +211,53 @@ def _serialize_sanitized_input(messages: list[dict[str, Any]]) -> str:
         separators=(",", ":"),
         sort_keys=True,
     )
+
+
+def _parse_error_from_instructor_retry(error: Exception) -> ParseValidationError | None:
+    retry_exception_type = _instructor_retry_exception_type()
+    if retry_exception_type is None or not isinstance(error, retry_exception_type):
+        return None
+
+    failed_attempts = getattr(error, "failed_attempts", None)
+    if not failed_attempts:
+        return None
+
+    if not all(
+        _is_instructor_parse_failure(getattr(attempt, "exception", None))
+        for attempt in failed_attempts
+    ):
+        return None
+
+    return ParseValidationError(str(error))
+
+
+def _is_instructor_parse_failure(error: Any) -> bool:
+    if isinstance(
+        error,
+        (ParseValidationError, PydanticValidationError, JSONDecodeError),
+    ):
+        return True
+
+    instructor_validation_error_type = _instructor_validation_error_type()
+    return instructor_validation_error_type is not None and isinstance(
+        error,
+        instructor_validation_error_type,
+    )
+
+
+def _instructor_retry_exception_type() -> type[Exception] | None:
+    try:
+        from instructor.core import InstructorRetryException
+    except ImportError:
+        return None
+
+    return InstructorRetryException
+
+
+def _instructor_validation_error_type() -> type[Exception] | None:
+    try:
+        from instructor.core import ValidationError
+    except ImportError:
+        return None
+
+    return ValidationError

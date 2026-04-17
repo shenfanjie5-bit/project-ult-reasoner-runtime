@@ -59,7 +59,7 @@ def test_generate_structured_with_replay_returns_result_and_bundle() -> None:
 
     assert isinstance(result, StructuredGenerationResult)
     assert isinstance(bundle, ReplayBundle)
-    assert client_factory_calls == [(profile, 2)]
+    assert client_factory_calls == [(profile, 1)]
     assert client.calls[0]["response_model"] is ReplayPayload
     assert result.parsed_result == {"answer": "ok", "score": 7}
     assert result.actual_provider == "openai"

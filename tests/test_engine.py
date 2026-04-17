@@ -127,7 +127,7 @@ def test_generate_structured_routes_selected_provider_to_client_factory() -> Non
         client_factory=_client_factory(client_calls),
     )
 
-    assert client_calls == [(fallback_profile, 3)]
+    assert client_calls == [(fallback_profile, 1)]
     assert result.actual_provider == "anthropic"
     assert result.actual_model == "claude-sonnet-4.5"
     assert result.fallback_path == ["anthropic/claude-sonnet-4.5"]
