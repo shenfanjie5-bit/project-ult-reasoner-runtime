@@ -21,8 +21,8 @@ _PHONE_PATTERNS = (
 _ACCOUNT_PATTERN = re.compile(
     r"(?i)(\b(?:account|acct|account_id|bank\s+account|card)\b"
     r"\s*(?:number|id)?\s*[:=#-]?\s*)"
-    r"((?:[A-Za-z0-9][A-Za-z0-9._-]{2,}[A-Za-z0-9])|"
-    r"(?:(?:\d[ -]?){6,}\d))"
+    r"((?:(?:\d[ -]?){6,}\d)|"
+    r"(?:[A-Za-z0-9][A-Za-z0-9._-]{2,}[A-Za-z0-9]))"
 )
 
 

@@ -125,6 +125,54 @@ def test_replay_hashes_same_sanitized_messages_sent_to_client() -> None:
     assert "[REDACTED_ACCOUNT]" in bundle.sanitized_input
 
 
+def test_replay_redacts_spaced_account_digits_before_provider_and_hash() -> None:
+    profile = ProviderProfile(provider="openai", model="gpt-4", fallback_priority=0)
+    raw_content = (
+        "card: 4111 1111 1111 1111; "
+        "account number: 1234 5678 9012 3456."
+    )
+    request = _request(messages=[{"role": "user", "content": raw_content}])
+    client = _FakeStructuredClient(
+        StructuredCallResult(
+            parsed_result={"answer": "ok", "score": 7},
+            raw_output='{"answer":"ok","score":7}',
+            token_usage={"prompt": 3, "completion": 4, "total": 7},
+            cost_estimate=0.02,
+            latency_ms=11,
+        )
+    )
+
+    _result, bundle = generate_structured_with_replay(
+        request,
+        provider_profiles=[profile],
+        schema_registry={"ReplayPayload": ReplayPayload},
+        client_factory=lambda _profile, _max_retries: client,
+    )
+
+    sent_messages = client.calls[0]["messages"]
+    serialized_sent_messages = json.dumps(
+        sent_messages,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+    assert sent_messages == [
+        {
+            "role": "user",
+            "content": (
+                "card: [REDACTED_ACCOUNT]; "
+                "account number: [REDACTED_ACCOUNT]."
+            ),
+        }
+    ]
+    assert bundle.sanitized_input == serialized_sent_messages
+    assert bundle.input_hash == sha256_text(serialized_sent_messages)
+    assert json.loads(bundle.sanitized_input) == sent_messages
+    for raw_fragment in ("4111", "1111", "1234", "5678", "9012", "3456"):
+        assert raw_fragment not in bundle.sanitized_input
+
+
 def test_generate_structured_keeps_structured_result_return_type() -> None:
     profile = ProviderProfile(provider="openai", model="gpt-4", fallback_priority=0)
     client = _FakeStructuredClient(
