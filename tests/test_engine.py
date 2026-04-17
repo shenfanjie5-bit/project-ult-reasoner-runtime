@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
 from uuid import UUID
 
 import pytest
 
+from reasoner_runtime.config import ProviderProfile
 from reasoner_runtime.core import (
     ReasonerRequest,
     StructuredGenerationResult,
@@ -48,6 +50,77 @@ def test_generate_structured_placeholder_result_has_zero_usage() -> None:
     assert result.token_usage == {"prompt": 0, "completion": 0, "total": 0}
     assert result.cost_estimate == 0.0
     assert result.latency_ms == 0
+
+
+def test_generate_structured_routes_selected_provider_to_client_factory() -> None:
+    fallback_profile = ProviderProfile(
+        provider="anthropic",
+        model="claude-sonnet-4.5",
+        fallback_priority=0,
+    )
+    configured_profile = ProviderProfile(
+        provider="openai",
+        model="gpt-5.4",
+        fallback_priority=1,
+    )
+    client_calls: list[tuple[ProviderProfile, int]] = []
+
+    def client_factory(profile: ProviderProfile, max_retries: int) -> object:
+        client_calls.append((profile, max_retries))
+        return object()
+
+    result = generate_structured(
+        _request(
+            configured_provider="missing",
+            configured_model="missing-model",
+            max_retries=3,
+        ),
+        provider_profiles=[configured_profile, fallback_profile],
+        client_factory=client_factory,
+    )
+
+    assert client_calls == [(fallback_profile, 3)]
+    assert result.actual_provider == "anthropic"
+    assert result.actual_model == "claude-sonnet-4.5"
+
+
+def test_generate_structured_loads_provider_profiles_from_config_path(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "providers.yaml"
+    config_path.write_text(
+        """
+providers:
+  - provider: openai
+    model: gpt-5.4
+    fallback_priority: 1
+  - provider: anthropic
+    model: claude-sonnet-4.5
+    fallback_priority: 0
+""",
+        encoding="utf-8",
+    )
+    client_calls: list[tuple[ProviderProfile, int]] = []
+
+    def client_factory(profile: ProviderProfile, max_retries: int) -> object:
+        client_calls.append((profile, max_retries))
+        return object()
+
+    result = generate_structured(
+        _request(
+            configured_provider="openai",
+            configured_model="gpt-5.4",
+            max_retries=1,
+        ),
+        provider_config_path=config_path,
+        client_factory=client_factory,
+    )
+
+    assert client_calls == [
+        (ProviderProfile(provider="openai", model="gpt-5.4", fallback_priority=1), 1)
+    ]
+    assert result.actual_provider == "openai"
+    assert result.actual_model == "gpt-5.4"
 
 
 def test_normalize_request_preserves_existing_request_id() -> None:
