@@ -5,96 +5,103 @@
 
 # AGENTS.md — reasoner-runtime 开发者指令
 
-## 技术栈
+## 技术栈与环境要求
 
-- **语言**：Python 3.12+
-- **核心依赖**：`litellm`、`instructor`（两者必须在 `requirements.txt` 中锁定版本号 + SHA-256 hash）
-- **观测**：LiteLLM callbacks / OTEL（最小可用模式）
-- **可选后端**：Langfuse（仅作 callback backend，不改接口）
+- Python **3.12+**
+- 核心依赖：`litellm`、`instructor`、OTEL 最小依赖
+- 依赖安全：`pip install --require-hashes`，`requirements.txt` 必须对 `litellm` 和 `instructor` 维持版本号 + SHA-256 hash 锁定
+
+## 常用命令
+
+```bash
+# 安装依赖（供应链锁定模式）
+pip install -r requirements.txt --require-hashes
+
+# 运行单元测试
+pytest tests/unit/
+
+# 运行集成测试
+pytest tests/integration/
+
+# 静态检查（确认业务模块无直连 provider SDK）
+grep -r "import openai\|import anthropic" --include="*.py" .
+```
 
 ## 目录结构
 
 ```
 reasoner_runtime/
-├── core/        # ReasonerRequest、generate_structured() 主入口
-├── providers/   # ProviderProfile、LiteLLM provider 路由
-├── structured/  # Instructor 初始化与结构化解析
-├── scrub/       # PII scrub handler（scrub_input()）
-├── callbacks/   # OTEL / callback backend 适配
-├── health/      # health_check()、ProviderHealthStatus
-├── replay/      # build_replay_bundle()、llm_lineage 生成
-└── config/      # YAML/TOML provider/scrub/callback 配置
+  core/        # ReasonerRequest、generate_structured() 主入口
+  providers/   # LiteLLM provider profile 抽象、build_client()
+  structured/  # Instructor 初始化与结构化解析
+  scrub/       # PII scrub handler（scrub_input()）
+  callbacks/   # OTEL / callback backend 适配
+  health/      # health_check() provider/model 探测
+  replay/      # build_replay_bundle()、llm_lineage 生成
+  config/      # YAML/TOML provider/scrub/callback 配置
 ```
 
-## 依赖安装
+## 实现约束
 
-```bash
-pip install --require-hashes -r requirements.txt
-```
+### max_retries 必须显式传入
+- `ReasonerRequest` 必须包含 `max_retries` 字段，推荐默认值 `2`
+- `build_client(profile, max_retries)` 必须显式接收 `max_retries`，禁止使用 Instructor 内部默认值
 
-## 测试
+### replay bundle 五字段（缺一不可）
+| 字段 | 生成方式 |
+|------|----------|
+| `sanitized_input` | `scrub_input()` 输出 |
+| `input_hash` | `sha256(sanitized_input)` |
+| `raw_output` | 模型原始返回文本 |
+| `parsed_result` | Instructor 解析结果 |
+| `output_hash` | `sha256(raw_output)` |
 
-```bash
-pytest tests/
-```
+### PII scrub 同源约束
+`scrub_input()` 的输出必须同时用于外发链、落盘链、日志链，禁止各链路单独实现脱敏。
 
-## 核心接口约定
+### 失败分类
+- `infra_level`：fallback 链全部失败 / 无可用 provider → 调用方硬停
+- `task_level`：单次解析失败但 provider 仍可用 → 业务模块降级处理
+- `success_with_fallback`：主 target 失败但 fallback 成功 → 返回结果并记录 lineage
 
-### `generate_structured(request: ReasonerRequest)`
+## 测试要求（§18）
 
-主调用入口，必须按此顺序产出：
-1. 执行 `scrub_input()` → 生成 `sanitized_input` + `input_hash`
-2. LiteLLM provider routing
-3. Instructor parse → `raw_output` + `parsed_result` + `output_hash`
-4. 生成 `llm_lineage` / token / cost / latency
-5. 返回 `StructuredGenerationResult` + `ReplayBundle`
+### 单元测试（必须覆盖）
+- `scrub_input()` 对姓名 / 手机 / 账户三类的脱敏
+- fallback / retry 分类逻辑
+- Instructor 初始化显式 `max_retries` 验证
+- replay bundle 哈希生成正确性
+- dependency hash 校验
 
-### `build_client(profile, max_retries)`
+### 集成测试（必须覆盖）
+- 结构化调用成功返回完整五字段
+- 主 provider 失败、fallback 成功，`fallback_path` 记录正确
+- `health_check()` 覆盖多个 provider/model 组合（非单点探针）
 
-`max_retries` 必须显式传入，**禁止**依赖 Instructor 或 LiteLLM 内部默认值。
+### 禁止绕过的静态检查
+- 业务模块不得直接 import 外部 provider SDK
 
-### `ReasonerRequest` 必填字段
+## 性能基线（§19）
 
-`request_id` / `caller_module` / `target_schema` / `messages` / `max_retries`（推荐值 `2`）
+| 指标 | 目标值 |
+|------|--------|
+| 单次结构化调用运行时额外开销 | < 500ms（不含模型推理时间） |
+| `health_check()` 单 provider/model 探测 | < 3 秒 |
+| replay bundle 生成耗时 | < 100ms |
 
-### Replay Bundle 五核心字段（命名不可变）
+## 实施阶段顺序（§21，严格遵守）
 
-`sanitized_input` / `input_hash` / `raw_output` / `parsed_result` / `output_hash`
+1. **阶段 0**：`ReasonerRequest` + `generate_structured()` 骨架 + ProviderProfile 配置样板
+2. **阶段 1**：LiteLLM + Instructor 主链 + replay bundle 五字段 + fallback/retry
+3. **阶段 2**：scrub handler + OTEL callbacks + `requirements.txt` hash 锁定
+4. **阶段 3**：`health_check()` 与 orchestrator 对接 + 跨模块接入
+5. **阶段 4**（可选）：Langfuse 等 callback backend（不改变 `generate_structured()` 返回结构）
 
-## Fallback / Retry 规则
+**规则**：scrub / replay / retry 未稳定前，禁止进入阶段 4。
 
-- 网络/配额/不可用失败 → 切下一个 fallback target
-- 结构化解析失败 → 在当前 target 上按 `max_retries` 重试
-- 全链失败 → 分类为 `infra_level`（硬停下游）或 `task_level`（业务降级）
-- 成功有回退 → 记录 `fallback_path`，类型为 `success_with_fallback`
+## 边界约束（不可写入本 repo 的内容）
 
-## PII Scrub 约束
-
-- 至少覆盖：姓名 / 手机 / 账户三类
-- 外发链、落盘链、日志链**必须复用同一个 `scrub_input()` 函数**，不允许各自实现
-- 覆盖率目标 ≥ 95%（对三类样本集）
-
-## 测试验收基线（对应 §18）
-
-| 测试类型 | 必须覆盖 |
-|----------|----------|
-| 单元测试 | scrub 三类敏感字段、fallback 分类逻辑、`max_retries` 显式约束、replay bundle hash 正确性、dependency hash 校验 |
-| 集成测试 | 主链路一条调用成功、主 provider 失败 fallback 成功、解析失败重试成功、`health_check()` 多 provider 探测 |
-| 契约测试 | `parsed_result` 与 `contracts` schema 一致、replay bundle 字段名与文档一致、业务模块不直接 import provider SDK |
-| 安全回归 | scrub 后外发链一致性、`raw_output` 持久化前不变形、升级 `litellm`/`instructor` 兼容性 |
-
-## 性能基线
-
-| 指标 | 目标 |
-|------|------|
-| 运行时额外开销（不含推理） | < 500ms |
-| `health_check()` 单 provider 探测 | < 3s |
-| replay bundle 生成 | < 100ms |
-
-## 禁止事项（代码级）
-
-- 不引入业务 prompt 模板或 analyzer 类
-- 不在本模块内写 Iceberg / PostgreSQL / Dagster 持久化调用
-- 不让业务模块直接 import `openai` / `anthropic` 等 provider SDK
-- Langfuse 或其他 callback backend 只能通过 `CallbackBackend` 协议接入，不得改变 `generate_structured()` 签名或返回结构
-- 新增依赖时必须同步在 `requirements.txt` 添加 SHA-256 hash 锁定（至少 `litellm`、`instructor` 必须维持）
+- 业务 prompt 模板 / analyzer 实现
+- Iceberg / PostgreSQL / Dagster event log 写入逻辑
+- Dagster resource 装配代码
+- `SinglePromptAnalyzer` / `MultiAgentAnalyzer`
