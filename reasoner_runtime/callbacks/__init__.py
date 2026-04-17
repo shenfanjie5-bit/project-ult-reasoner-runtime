@@ -4,6 +4,7 @@ from reasoner_runtime.callbacks.base import (
     CallbackError,
     CallbackSuccess,
 )
+from reasoner_runtime.callbacks.factory import build_callback_backends
 from reasoner_runtime.callbacks.litellm import (
     LiteLLMCallbackBridge,
     configure_litellm_callbacks,
@@ -17,5 +18,6 @@ __all__ = [
     "CallbackSuccess",
     "LiteLLMCallbackBridge",
     "OTELCallbackBackend",
+    "build_callback_backends",
     "configure_litellm_callbacks",
 ]

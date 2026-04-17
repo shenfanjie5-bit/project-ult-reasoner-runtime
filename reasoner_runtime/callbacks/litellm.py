@@ -79,30 +79,62 @@ class LiteLLMCallbackBridge:
                 continue
 
 
-_installed_bridges: dict[tuple[int, tuple[int, ...]], LiteLLMCallbackBridge] = {}
+_installed_bridges: dict[int, LiteLLMCallbackBridge] = {}
 
 
 def configure_litellm_callbacks(
     backends: Sequence[CallbackBackend],
-) -> LiteLLMCallbackBridge:
-    import litellm
+) -> LiteLLMCallbackBridge | None:
+    try:
+        import litellm
+    except ImportError:
+        if backends:
+            raise
+        return None
 
-    backend_key = tuple(id(backend) for backend in backends)
-    bridge_key = (id(litellm), backend_key)
-    bridge = _installed_bridges.get(bridge_key)
-    if bridge is None:
-        bridge = LiteLLMCallbackBridge(backends)
-        _installed_bridges[bridge_key] = bridge
+    _remove_installed_handlers(litellm)
+    if not backends:
+        return None
 
+    bridge = LiteLLMCallbackBridge(backends)
+    _installed_bridges[id(litellm)] = bridge
     _register_handler(litellm, "success_callback", bridge.success_handler)
     _register_handler(litellm, "failure_callback", bridge.failure_handler)
     return bridge
+
+
+def _remove_installed_handlers(module: Any) -> None:
+    _installed_bridges.pop(id(module), None)
+    _unregister_bridge_handlers(
+        module,
+        "success_callback",
+        LiteLLMCallbackBridge.success_handler,
+    )
+    _unregister_bridge_handlers(
+        module,
+        "failure_callback",
+        LiteLLMCallbackBridge.failure_handler,
+    )
 
 
 def _register_handler(module: Any, attribute: str, handler: Any) -> None:
     callbacks = _normalize_callback_list(getattr(module, attribute, None))
     if not any(_same_handler(existing, handler) for existing in callbacks):
         callbacks.append(handler)
+    setattr(module, attribute, callbacks)
+
+
+def _unregister_bridge_handlers(
+    module: Any,
+    attribute: str,
+    method: Any,
+) -> None:
+    callbacks = _normalize_callback_list(getattr(module, attribute, None))
+    callbacks = [
+        existing
+        for existing in callbacks
+        if not _same_bridge_handler(existing, method)
+    ]
     setattr(module, attribute, callbacks)
 
 
@@ -121,6 +153,13 @@ def _same_handler(left: Any, right: Any) -> bool:
         getattr(left, "__self__", None) is getattr(right, "__self__", None)
         and getattr(left, "__func__", None) is getattr(right, "__func__", None)
     ) or left is right
+
+
+def _same_bridge_handler(handler: Any, method: Any) -> bool:
+    return (
+        isinstance(getattr(handler, "__self__", None), LiteLLMCallbackBridge)
+        and getattr(handler, "__func__", None) is method
+    )
 
 
 def _build_context(kwargs: Mapping[str, Any]) -> CallbackContext:
