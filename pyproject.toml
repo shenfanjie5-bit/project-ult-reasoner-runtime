@@ -7,11 +7,26 @@ name = "project-ult-reasoner-runtime"
 version = "0.1.0"
 description = "Scaffold workspace for reasoner-runtime."
 readme = "README.md"
-requires-python = ">=3.11"
-dependencies = []
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "litellm",
+    "instructor",
+]
 
 [tool.setuptools]
-packages = []
+packages = [
+    "reasoner_runtime",
+    "reasoner_runtime.callbacks",
+    "reasoner_runtime.config",
+    "reasoner_runtime.core",
+    "reasoner_runtime.health",
+    "reasoner_runtime.providers",
+    "reasoner_runtime.replay",
+    "reasoner_runtime.scrub",
+    "reasoner_runtime.structured",
+]
 
 [tool.pytest.ini_options]
 addopts = "-q"
