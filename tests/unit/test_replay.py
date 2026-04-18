@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from time import perf_counter
 
-from reasoner_runtime.core import StructuredGenerationResult
+from reasoner_runtime.core import ReasonerRequest, StructuredGenerationResult
 from reasoner_runtime.replay import (
     ReplayBundle,
     build_llm_lineage,
@@ -13,10 +13,18 @@ from reasoner_runtime.replay import (
 
 def _result(
     *,
+    request_id: str = "req-replay-unit",
+    result_id: str = "res-replay-unit",
+    reasoner_name: str = "unit-test",
+    reasoner_version: str = "0.1.0",
     fallback_path: list[str] | None = None,
     retry_count: int = 0,
 ) -> StructuredGenerationResult:
     return StructuredGenerationResult(
+        result_id=result_id,
+        request_id=request_id,
+        reasoner_name=reasoner_name,
+        reasoner_version=reasoner_version,
         parsed_result={"answer": "ok"},
         actual_provider="openai",
         actual_model="gpt-4",
@@ -25,6 +33,18 @@ def _result(
         token_usage={"prompt": 1, "completion": 2, "total": 3},
         cost_estimate=0.01,
         latency_ms=5,
+    )
+
+
+def _request() -> ReasonerRequest:
+    return ReasonerRequest(
+        request_id="req-replay-unit",
+        caller_module="unit-test",
+        target_schema="ReplayPayload",
+        messages=[{"role": "user", "content": "return a replay payload"}],
+        configured_provider="openai",
+        configured_model="gpt-4",
+        max_retries=2,
     )
 
 
@@ -66,9 +86,18 @@ def test_build_llm_lineage_keeps_primary_path_as_list() -> None:
 
 def test_build_replay_bundle_populates_core_five_fields_and_lineage() -> None:
     parsed_result = {"answer": "ok", "score": 1}
-    lineage = build_llm_lineage(_result(fallback_path=["openai/gpt-4"]))
+    request = _request()
+    result = _result(
+        request_id=request.request_id,
+        reasoner_name=request.reasoner_name,
+        reasoner_version=request.reasoner_version,
+        fallback_path=["openai/gpt-4"],
+    )
+    lineage = build_llm_lineage(result)
 
     bundle = build_replay_bundle(
+        request,
+        result,
         "sanitized input",
         '{"answer":"ok","score":1}',
         parsed_result,
@@ -82,22 +111,41 @@ def test_build_replay_bundle_populates_core_five_fields_and_lineage() -> None:
     assert bundle.parsed_result == parsed_result
     assert bundle.output_hash == sha256_text('{"answer":"ok","score":1}')
     assert bundle.llm_lineage == lineage
+    assert bundle.request.request_id == request.request_id
+    assert bundle.result.request_id == request.request_id
 
 
 def test_build_replay_bundle_preserves_raw_output_without_normalizing() -> None:
     raw_output = ' \n{"b":2,"a":1}\n '
+    request = _request()
 
-    bundle = build_replay_bundle("in", raw_output, {"a": 1, "b": 2}, {})
+    bundle = build_replay_bundle(
+        request,
+        _result(request_id=request.request_id),
+        "in",
+        raw_output,
+        {"a": 1, "b": 2},
+        {},
+    )
 
     assert bundle.raw_output == raw_output
     assert bundle.output_hash == sha256_text(raw_output)
 
 
 def test_build_replay_bundle_runtime_baseline_under_100ms() -> None:
-    build_replay_bundle("warmup", "{}", {}, {})
+    request = _request()
+    result = _result(request_id=request.request_id)
+    build_replay_bundle(request, result, "warmup", "{}", {}, {})
 
     started_at = perf_counter()
-    build_replay_bundle("input", '{"answer":"ok"}', {"answer": "ok"}, {})
+    build_replay_bundle(
+        request,
+        result,
+        "input",
+        '{"answer":"ok"}',
+        {"answer": "ok"},
+        {},
+    )
     elapsed_ms = (perf_counter() - started_at) * 1000
 
     assert elapsed_ms < 100

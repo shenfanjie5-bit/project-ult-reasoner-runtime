@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 from reasoner_runtime.replay.models import ReplayBundle
 
 if TYPE_CHECKING:
-    from reasoner_runtime.core.models import StructuredGenerationResult
+    from reasoner_runtime.core.models import ReasonerRequest, StructuredGenerationResult
 
 
 def sha256_text(value: str) -> str:
@@ -23,6 +23,8 @@ def build_llm_lineage(result: StructuredGenerationResult) -> dict[str, Any]:
 
 
 def build_replay_bundle(
+    request: ReasonerRequest,
+    result: StructuredGenerationResult,
     sanitized_input: str,
     raw_output: str,
     parsed_result: dict[str, Any],
@@ -35,4 +37,6 @@ def build_replay_bundle(
         parsed_result=parsed_result,
         output_hash=sha256_text(raw_output),
         llm_lineage=lineage,
+        request=request.to_contract(),
+        result=result.to_contract(),
     )

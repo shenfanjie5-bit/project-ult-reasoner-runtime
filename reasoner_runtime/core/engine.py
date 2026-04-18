@@ -222,6 +222,8 @@ def _generate_structured_with_replay_impl(
 
             lineage = build_llm_lineage(result)
             replay_bundle = build_replay_bundle(
+                runtime_request,
+                result,
                 scrubbed.sanitized_input,
                 final_raw_output,
                 result.parsed_result,

@@ -21,7 +21,10 @@ class ReplayPayload(BaseModel):
     score: int
 
 
-def _request(messages: list[dict[str, Any]] | None = None) -> ReasonerRequest:
+def _request(
+    messages: list[dict[str, Any]] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> ReasonerRequest:
     return ReasonerRequest(
         request_id="req-replay",
         caller_module="integration-test",
@@ -30,6 +33,7 @@ def _request(messages: list[dict[str, Any]] | None = None) -> ReasonerRequest:
         configured_provider="openai",
         configured_model="gpt-4",
         max_retries=2,
+        metadata=metadata or {},
     )
 
 
@@ -50,8 +54,12 @@ def test_generate_structured_with_replay_returns_result_and_bundle() -> None:
         client_factory_calls.append((call_profile, max_retries))
         return client
 
+    request = _request(
+        metadata={"cycle_id": "cycle-replay", "reasoner_version": "2026.04"}
+    )
+
     result, bundle = generate_structured_with_replay(
-        _request(),
+        request,
         provider_profiles=[profile],
         schema_registry={"ReplayPayload": ReplayPayload},
         client_factory=client_factory,
@@ -71,8 +79,8 @@ def test_generate_structured_with_replay_returns_result_and_bundle() -> None:
     assert bundle.output_hash == sha256_text(raw_output)
     assert bundle.input_hash == sha256_text(bundle.sanitized_input)
     assert json.loads(bundle.sanitized_input) == {
-        "messages": _request().messages,
-        "metadata": {},
+        "messages": request.messages,
+        "metadata": request.metadata,
     }
     assert bundle.llm_lineage == {
         "provider": result.actual_provider,
@@ -80,6 +88,15 @@ def test_generate_structured_with_replay_returns_result_and_bundle() -> None:
         "fallback_path": result.fallback_path,
         "retry_count": result.retry_count,
     }
+    contract = bundle.to_contract()
+    assert contract.request.request_id == request.request_id
+    assert contract.request.cycle_id == request.cycle_id
+    assert contract.result.request_id == request.request_id
+    assert contract.request.reasoner_name == request.reasoner_name
+    assert contract.request.reasoner_version == request.reasoner_version
+    assert contract.result.reasoner_name == result.reasoner_name
+    assert contract.result.reasoner_version == result.reasoner_version
+    assert contract.result.result_id == result.result_id
 
 
 def test_generate_structured_with_replay_hashes_provider_sanitized_messages() -> None:
