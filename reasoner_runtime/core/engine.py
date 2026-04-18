@@ -227,6 +227,8 @@ def _generate_structured_with_replay_impl(
                 final_raw_output,
                 result.parsed_result,
                 lineage,
+                request=runtime_request,
+                result=result,
             )
             _emit_callback_success(
                 normalized_request,

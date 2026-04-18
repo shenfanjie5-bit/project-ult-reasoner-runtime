@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 from reasoner_runtime.replay.models import ReplayBundle
 
 if TYPE_CHECKING:
-    from reasoner_runtime.core.models import StructuredGenerationResult
+    from reasoner_runtime.core.models import ReasonerRequest, StructuredGenerationResult
 
 
 def sha256_text(value: str) -> str:
@@ -27,7 +27,16 @@ def build_replay_bundle(
     raw_output: str,
     parsed_result: dict[str, Any],
     lineage: dict[str, Any],
+    *,
+    request: ReasonerRequest | None = None,
+    result: StructuredGenerationResult | None = None,
 ) -> ReplayBundle:
+    contract_fields: dict[str, Any] = {}
+    if request is not None:
+        contract_fields["request"] = request.to_contract()
+    if result is not None:
+        contract_fields["result"] = result.to_contract()
+
     return ReplayBundle(
         sanitized_input=sanitized_input,
         input_hash=sha256_text(sanitized_input),
@@ -35,4 +44,5 @@ def build_replay_bundle(
         parsed_result=parsed_result,
         output_hash=sha256_text(raw_output),
         llm_lineage=lineage,
+        **contract_fields,
     )
