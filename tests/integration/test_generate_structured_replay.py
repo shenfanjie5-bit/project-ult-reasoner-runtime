@@ -129,6 +129,31 @@ def test_generate_structured_with_replay_hashes_provider_sanitized_messages() ->
     assert sanitized_messages != request.messages
 
 
+def test_generate_structured_with_replay_contract_keeps_request_identity() -> None:
+    profile = ProviderProfile(provider="openai", model="gpt-4", fallback_priority=0)
+    client = _FakeStructuredClient(
+        StructuredCallResult(
+            parsed_result={"answer": "ok", "score": 9},
+            raw_output='{"answer":"ok","score":9}',
+            token_usage={"prompt": 1, "completion": 1, "total": 2},
+            cost_estimate=0.0,
+            latency_ms=1,
+        )
+    )
+    request = _request()
+
+    _result, bundle = generate_structured_with_replay(
+        request,
+        provider_profiles=[profile],
+        schema_registry={"ReplayPayload": ReplayPayload},
+        client_factory=lambda _profile, _max_retries: client,
+    )
+
+    contract = bundle.to_contract()
+    assert contract.request.request_id == request.request_id
+    assert contract.result.request_id == request.request_id
+
+
 def test_generate_structured_keeps_structured_result_return_type() -> None:
     profile = ProviderProfile(provider="openai", model="gpt-4", fallback_priority=0)
     client = _FakeStructuredClient(
