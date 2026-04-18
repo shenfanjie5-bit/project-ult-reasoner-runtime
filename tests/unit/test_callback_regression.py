@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from copy import deepcopy
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 from types import SimpleNamespace
@@ -74,7 +75,9 @@ def test_callback_backend_switch_does_not_change_structured_result_contract() ->
     baseline = dumps[0]
     for result_dump in dumps:
         assert result_dump.keys() == baseline.keys()
-        assert result_dump == baseline
+        assert _without_dynamic_contract_times(result_dump) == (
+            _without_dynamic_contract_times(baseline)
+        )
 
     assert baseline["parsed_result"] == {"answer": "fallback-ok", "score": 7}
     assert baseline["actual_provider"] == "anthropic"
@@ -95,7 +98,9 @@ def test_callback_backend_switch_does_not_change_replay_bundle_contract() -> Non
 
     baseline = dumps[0]
     for bundle, bundle_dump in zip(bundles, dumps, strict=True):
-        assert bundle_dump == baseline
+        assert _without_dynamic_contract_times(bundle_dump) == (
+            _without_dynamic_contract_times(baseline)
+        )
         assert _core_replay_fields(bundle_dump) == {
             "sanitized_input",
             "input_hash",
@@ -208,6 +213,19 @@ def _core_replay_fields(bundle_dump: dict[str, Any]) -> set[str]:
 
 def _sha256(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _without_dynamic_contract_times(payload: dict[str, Any]) -> dict[str, Any]:
+    stable_payload = deepcopy(payload)
+    stable_payload.pop("completed_at", None)
+    stable_payload.pop("recorded_at", None)
+    request = stable_payload.get("request")
+    if isinstance(request, dict):
+        request.pop("requested_at", None)
+    result = stable_payload.get("result")
+    if isinstance(result, dict):
+        result.pop("completed_at", None)
+    return stable_payload
 
 
 class _FakeClient:

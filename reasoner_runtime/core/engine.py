@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from datetime import UTC, datetime
 from json import JSONDecodeError
 from pathlib import Path
 from threading import RLock
@@ -27,7 +28,12 @@ from reasoner_runtime.config.models import (
     ProviderProfile,
     ScrubRuleSet,
 )
-from reasoner_runtime.core.models import ReasonerRequest, StructuredGenerationResult
+from reasoner_runtime.core.models import (
+    _RUNTIME_CONTRACT_VERSION,
+    _prompt_from_messages,
+    ReasonerRequest,
+    StructuredGenerationResult,
+)
 from reasoner_runtime.providers import (
     FallbackExecutionError,
     ParseValidationError,
@@ -142,7 +148,12 @@ def _generate_structured_with_replay_impl(
                 scrub_rule_set,
             )
             runtime_request = normalized_request.model_copy(
-                update={"messages": scrubbed.messages, "metadata": scrubbed.metadata}
+                update={
+                    "messages": scrubbed.messages,
+                    "metadata": scrubbed.metadata,
+                    "prompt": _prompt_from_messages(scrubbed.messages),
+                    "context": scrubbed.metadata,
+                }
             )
 
             response_model = resolve_response_model(
@@ -183,6 +194,15 @@ def _generate_structured_with_replay_impl(
                 final_raw_output = call_result.raw_output
 
                 return StructuredGenerationResult(
+                    result_id=f"{call_request.request_id}:result"
+                    if call_request.request_id
+                    else "runtime-result",
+                    request_id=call_request.request_id or "runtime-request",
+                    reasoner_name=call_request.reasoner_name,
+                    reasoner_version=call_request.reasoner_version
+                    or _RUNTIME_CONTRACT_VERSION,
+                    output=call_result.parsed_result,
+                    completed_at=datetime.now(UTC),
                     parsed_result=call_result.parsed_result,
                     actual_provider=profile.provider,
                     actual_model=profile.model,

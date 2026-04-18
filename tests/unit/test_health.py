@@ -66,20 +66,23 @@ def test_health_check_report_json_preserves_public_fields() -> None:
         summary="ok",
     )
 
-    assert report.model_dump(mode="json") == {
-        "provider_statuses": [
-            {
-                "provider": "openai",
-                "model": "gpt-4",
-                "reachable": True,
-                "latency_ms": 1,
-                "quota_status": "ok",
-                "error": None,
-            }
-        ],
-        "all_critical_targets_available": True,
-        "summary": "ok",
-    }
+    dump = report.model_dump(mode="json")
+
+    assert dump["provider_statuses"] == [
+        {
+            "provider": "openai",
+            "model": "gpt-4",
+            "reachable": True,
+            "latency_ms": 1,
+            "quota_status": "ok",
+            "error": None,
+        }
+    ]
+    assert dump["all_critical_targets_available"] is True
+    assert dump["summary"] == "ok"
+    assert dump["subsystem_id"] == "reasoner-runtime"
+    assert dump["status"] == "ok"
+    assert dump["pending_count"] == 0
 
 
 def test_aggregate_health_statuses_passes_only_when_all_targets_are_available() -> None:

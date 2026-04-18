@@ -35,28 +35,30 @@ def test_health_check_reports_multiple_provider_model_combinations() -> None:
         ("anthropic", "claude-sonnet-4.5"),
     ]
     assert report.all_critical_targets_available is True
-    assert report.model_dump(mode="json") == {
-        "provider_statuses": [
-            {
-                "provider": "openai",
-                "model": "gpt-4",
-                "reachable": True,
-                "latency_ms": 10,
-                "quota_status": "ok",
-                "error": None,
-            },
-            {
-                "provider": "anthropic",
-                "model": "claude-sonnet-4.5",
-                "reachable": True,
-                "latency_ms": 10,
-                "quota_status": "ok",
-                "error": None,
-            },
-        ],
-        "all_critical_targets_available": True,
-        "summary": "all 2 critical provider/model target(s) available",
-    }
+    dump = report.model_dump(mode="json")
+    assert dump["provider_statuses"] == [
+        {
+            "provider": "openai",
+            "model": "gpt-4",
+            "reachable": True,
+            "latency_ms": 10,
+            "quota_status": "ok",
+            "error": None,
+        },
+        {
+            "provider": "anthropic",
+            "model": "claude-sonnet-4.5",
+            "reachable": True,
+            "latency_ms": 10,
+            "quota_status": "ok",
+            "error": None,
+        },
+    ]
+    assert dump["all_critical_targets_available"] is True
+    assert dump["summary"] == "all 2 critical provider/model target(s) available"
+    assert dump["subsystem_id"] == "reasoner-runtime"
+    assert dump["status"] == "ok"
+    assert dump["pending_count"] == 0
 
 
 def test_health_check_empty_profiles_returns_failing_report() -> None:
