@@ -45,7 +45,12 @@ from reasoner_runtime.replay import (
     build_llm_lineage,
     build_replay_bundle,
 )
-from reasoner_runtime.scrub import scrub_request, scrub_text
+from reasoner_runtime.scrub import (
+    ScrubbedRequest,
+    scrub_payload,
+    scrub_request,
+    scrub_text,
+)
 from reasoner_runtime.structured import resolve_response_model, run_structured_call
 
 
@@ -147,13 +152,10 @@ def _generate_structured_with_replay_impl(
                 normalized_request.metadata,
                 scrub_rule_set,
             )
-            runtime_request = normalized_request.model_copy(
-                update={
-                    "messages": scrubbed.messages,
-                    "metadata": scrubbed.metadata,
-                    "prompt": _prompt_from_messages(scrubbed.messages),
-                    "context": scrubbed.metadata,
-                }
+            runtime_request = _build_scrubbed_runtime_request(
+                normalized_request,
+                scrubbed,
+                scrub_rule_set,
             )
 
             response_model = resolve_response_model(
@@ -272,6 +274,50 @@ def _resolve_provider_profiles(
             fallback_priority=0,
         )
     ]
+
+
+def _build_scrubbed_runtime_request(
+    request: ReasonerRequest,
+    scrubbed: ScrubbedRequest,
+    scrub_rule_set: ScrubRuleSet | None,
+) -> ReasonerRequest:
+    return request.model_copy(
+        update={
+            "request_id": scrub_text(request.request_id, scrub_rule_set),
+            "caller_module": scrub_text(request.caller_module, scrub_rule_set),
+            "target_schema": scrub_text(request.target_schema, scrub_rule_set),
+            "messages": scrubbed.messages,
+            "metadata": scrubbed.metadata,
+            "cycle_id": _scrubbed_contract_metadata_field(
+                scrubbed.metadata,
+                "cycle_id",
+                request.cycle_id,
+                scrub_rule_set,
+            ),
+            "reasoner_name": scrub_text(request.reasoner_name, scrub_rule_set),
+            "reasoner_version": _scrubbed_contract_metadata_field(
+                scrubbed.metadata,
+                "reasoner_version",
+                request.reasoner_version,
+                scrub_rule_set,
+            ),
+            "prompt": _prompt_from_messages(scrubbed.messages),
+            "context": scrubbed.metadata,
+            "input_refs": scrub_payload(list(request.input_refs), scrub_rule_set),
+        }
+    )
+
+
+def _scrubbed_contract_metadata_field(
+    metadata: Mapping[str, Any],
+    key: str,
+    fallback: str,
+    scrub_rule_set: ScrubRuleSet | None,
+) -> str:
+    if key in metadata:
+        return str(metadata[key])
+
+    return scrub_text(fallback, scrub_rule_set)
 
 
 def _resolve_runtime_callback_backends(

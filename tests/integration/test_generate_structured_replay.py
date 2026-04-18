@@ -146,6 +146,46 @@ def test_generate_structured_with_replay_hashes_provider_sanitized_messages() ->
     assert sanitized_messages != request.messages
 
 
+def test_generate_structured_with_replay_scrubs_replay_contract_audit_fields() -> None:
+    profile = ProviderProfile(provider="openai", model="gpt-4", fallback_priority=0)
+    raw_output = '{"score":9,"answer":"ok"}'
+    client = _FakeStructuredClient(
+        StructuredCallResult(
+            parsed_result={"answer": "ok", "score": 9},
+            raw_output=raw_output,
+            token_usage={"prompt": 4, "completion": 4, "total": 8},
+            cost_estimate=0.01,
+            latency_ms=9,
+        )
+    )
+    raw_phone = "415-555-2671"
+    request = _request(
+        metadata={
+            "cycle_id": f"cycle phone {raw_phone}",
+            "reasoner_version": f"version phone {raw_phone}",
+            "owner": f"phone {raw_phone}",
+        }
+    )
+
+    result, bundle = generate_structured_with_replay(
+        request,
+        provider_profiles=[profile],
+        schema_registry={"ReplayPayload": ReplayPayload},
+        client_factory=lambda _profile, _max_retries: client,
+    )
+
+    contract = bundle.to_contract()
+    contract_json = contract.model_dump_json()
+
+    assert raw_phone not in contract_json
+    assert contract.request.cycle_id == "cycle phone [REDACTED_PHONE]"
+    assert contract.request.reasoner_version == "version phone [REDACTED_PHONE]"
+    assert contract.request.context["cycle_id"] == contract.request.cycle_id
+    assert contract.result.request_id == request.request_id
+    assert contract.result.reasoner_version == result.reasoner_version
+    assert contract.result.reasoner_version == contract.request.reasoner_version
+
+
 def test_generate_structured_keeps_structured_result_return_type() -> None:
     profile = ProviderProfile(provider="openai", model="gpt-4", fallback_priority=0)
     client = _FakeStructuredClient(
