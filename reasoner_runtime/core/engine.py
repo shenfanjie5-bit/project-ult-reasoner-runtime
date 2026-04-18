@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from json import JSONDecodeError
@@ -320,8 +319,7 @@ def _scrubbed_request_identity(
     if scrubbed == request_id:
         return request_id
 
-    digest = hashlib.sha256(request_id.encode("utf-8")).hexdigest()
-    return f"{scrubbed} [sha256:{digest}]"
+    return f"surrogate-request-{uuid4()}"
 
 
 def _scrubbed_contract_metadata_field(

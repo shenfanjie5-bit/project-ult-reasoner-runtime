@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
@@ -215,11 +216,15 @@ def test_generate_structured_with_replay_preserves_distinct_pii_request_id_surro
 
         contract = bundle.to_contract()
         contract_json = contract.model_dump_json()
+        raw_request_id = request.request_id
+        raw_request_id_digest = hashlib.sha256(
+            raw_request_id.encode("utf-8")
+        ).hexdigest()
 
         assert raw_phone not in contract_json
-        assert contract.request.request_id.startswith(
-            "req phone [REDACTED_PHONE] [sha256:"
-        )
+        assert raw_request_id not in contract_json
+        assert raw_request_id_digest not in contract_json
+        assert contract.request.request_id.startswith("surrogate-request-")
         assert contract.result.request_id == contract.request.request_id
         assert result.request_id == contract.request.request_id
         assert contract.result.result_id == result.result_id
