@@ -88,6 +88,8 @@ class StructuredGenerationResult(ContractReasonerResult):
     parsed_result: dict[str, Any]
     actual_provider: str
     actual_model: str
+    configured_target: str | None = None
+    failure_class: str = "none"
     fallback_path: list[str] = Field(default_factory=list)
     retry_count: int = Field(default=0, ge=0)
     token_usage: dict[str, NonNegativeInt]
@@ -101,7 +103,7 @@ class StructuredGenerationResult(ContractReasonerResult):
             return data
 
         values = dict(data)
-        failure_class = values.pop("failure_class", None)
+        failure_class = values.get("failure_class")
         parsed_result = values.get("parsed_result")
         output = parsed_result if isinstance(parsed_result, dict) else {}
 

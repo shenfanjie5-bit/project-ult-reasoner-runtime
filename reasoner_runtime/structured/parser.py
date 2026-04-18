@@ -47,12 +47,13 @@ def run_structured_call(
     response_model: type[BaseModel],
 ) -> StructuredCallResult:
     started_at = perf_counter()
+    callback_metadata = _build_callback_metadata(request)
     client_response = _invoke_client(
         client,
         messages=request.messages,
-        request_metadata=request.metadata,
+        provider_metadata=_provider_metadata(request.metadata, callback_metadata),
         response_model=response_model,
-        callback_metadata=_build_callback_metadata(request),
+        callback_metadata=callback_metadata,
     )
     if isinstance(client_response, StructuredCallResult):
         return client_response
@@ -74,7 +75,7 @@ def _invoke_client(
     client: Any,
     *,
     messages: list[dict[str, Any]],
-    request_metadata: dict[str, Any],
+    provider_metadata: dict[str, Any],
     response_model: type[BaseModel],
     callback_metadata: dict[str, Any],
 ) -> Any:
@@ -93,7 +94,7 @@ def _invoke_client(
             client.create_structured,
             kwargs,
             "metadata",
-            request_metadata,
+            provider_metadata,
         )
         return client.create_structured(**kwargs)
 
@@ -112,7 +113,7 @@ def _invoke_client(
                 "response_model": response_model,
             },
             "metadata",
-            _provider_metadata(request_metadata, callback_metadata),
+            provider_metadata,
         )
 
     return _call_with_optional_metadata(
@@ -122,7 +123,7 @@ def _invoke_client(
             "response_model": response_model,
         },
         "metadata",
-        _provider_metadata(request_metadata, callback_metadata),
+        provider_metadata,
     )
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from enum import Enum
 from typing import Any
@@ -51,6 +52,48 @@ _SAFE_DETAIL_KEYS = {
     "target_schema",
 }
 
+_EXHAUSTED_ERROR_NAMES = {
+    "AuthenticationError",
+    "AuthorizationError",
+    "BudgetExceededError",
+    "ForbiddenError",
+    "InvalidAPIKeyError",
+    "PermissionDeniedError",
+    "QuotaExceededError",
+}
+_LIMITED_ERROR_NAMES = {
+    "RateLimitError",
+}
+_EXHAUSTED_HTTP_STATUSES = {401, 402, 403}
+_LIMITED_HTTP_STATUSES = {429}
+_EXHAUSTED_MESSAGE_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bauth\b",
+        r"\bauthentication\b",
+        r"\bauthorization\b",
+        r"\bbilling\b",
+        r"\bunauthorized\b",
+        r"\bforbidden\b",
+        r"\binvalid\s+api\s+key\b",
+        r"\bapi\s+key\b",
+        r"\bbudget\s+exceeded\b",
+        r"\bquota\s+exceeded\b",
+        r"\bquota\s+exhausted\b",
+        r"\binsufficient_quota\b",
+        r"\bcredits\s+exhausted\b",
+    )
+)
+_LIMITED_MESSAGE_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\brate\s+limit\b",
+        r"\brate_limit\b",
+        r"\btoo\s+many\s+requests\b",
+        r"\blimited\b",
+    )
+)
+
 
 def to_reasoner_error_classification(
     failure_class: FailureClass | str | None,
@@ -71,7 +114,12 @@ def to_reasoner_error_classification(
         code=_ERROR_CODE_BY_CATEGORY[category],
         category=category,
         severity=Severity.ERROR,
-        retryable=_classification_retryable(category, normalized, error),
+        retryable=_classification_retryable(
+            category,
+            normalized,
+            error,
+            context_values,
+        ),
         message=_classification_message(category, normalized, message),
         details=_classification_details(normalized, error, context_values),
     )
@@ -104,7 +152,36 @@ class FallbackDecision(BaseModel):
 
         if self.error_classification is None:
             self.error_classification = classification
+        elif _classification_conflicts(self.error_classification, classification):
+            raise ValueError(
+                "fallback error_classification does not match failure_class"
+            )
         return self
+
+
+def provider_quota_status_from_error(error: BaseException | None) -> str:
+    if error is None:
+        return "ok"
+
+    status_code = _error_status_code(error)
+    if status_code in _EXHAUSTED_HTTP_STATUSES:
+        return "exhausted"
+    if status_code in _LIMITED_HTTP_STATUSES:
+        return "limited"
+
+    error_names = set(_error_names(error))
+    if error_names & _EXHAUSTED_ERROR_NAMES:
+        return "exhausted"
+    if error_names & _LIMITED_ERROR_NAMES:
+        return "limited"
+
+    message = str(error)
+    if any(pattern.search(message) for pattern in _EXHAUSTED_MESSAGE_PATTERNS):
+        return "exhausted"
+    if any(pattern.search(message) for pattern in _LIMITED_MESSAGE_PATTERNS):
+        return "limited"
+
+    return "ok"
 
 
 def _coerce_failure_class(failure_class: FailureClass | str | None) -> FailureClass:
@@ -133,13 +210,14 @@ def _classification_retryable(
     category: ReasonerErrorCategory,
     failure_class: FailureClass,
     error: BaseException | None,
+    context: Mapping[str, Any],
 ) -> bool:
     if failure_class is FailureClass.task_level:
         return False
     if category is ReasonerErrorCategory.TIMEOUT:
         return True
     if category is ReasonerErrorCategory.MODEL_PROVIDER:
-        return not _is_non_retryable_provider_failure(error)
+        return not _is_non_retryable_provider_failure(error, context)
     return False
 
 
@@ -192,21 +270,22 @@ def _is_timeout_failure(
     )
 
 
-def _is_non_retryable_provider_failure(error: BaseException | None) -> bool:
-    if error is None:
-        return False
-    marker = " ".join(_error_names(error)).lower()
-    return any(
-        text in marker
-        for text in (
-            "authentication",
-            "budgetexceeded",
-            "forbidden",
-            "invalidapikey",
-            "permission",
-            "quotaexceeded",
-        )
-    )
+def _is_non_retryable_provider_failure(
+    error: BaseException | None,
+    context: Mapping[str, Any],
+) -> bool:
+    if str(context.get("quota_status", "")).lower() == "exhausted":
+        return True
+    if provider_quota_status_from_error(error) == "exhausted":
+        return True
+
+    context_error = context.get("error")
+    if context_error is not None and any(
+        pattern.search(str(context_error)) for pattern in _EXHAUSTED_MESSAGE_PATTERNS
+    ):
+        return True
+
+    return False
 
 
 def _has_provider_context(context: Mapping[str, Any]) -> bool:
@@ -222,6 +301,31 @@ def _has_provider_context(context: Mapping[str, Any]) -> bool:
 
 def _error_names(error: BaseException) -> list[str]:
     return [cls.__name__ for cls in type(error).mro()]
+
+
+def _error_status_code(error: BaseException) -> int | None:
+    for attr_name in ("status_code", "status", "http_status"):
+        value = getattr(error, attr_name, None)
+        if isinstance(value, int):
+            return value
+
+    response = getattr(error, "response", None)
+    value = getattr(response, "status_code", None)
+    if isinstance(value, int):
+        return value
+
+    return None
+
+
+def _classification_conflicts(
+    supplied: ReasonerErrorClassification,
+    expected: ReasonerErrorClassification,
+) -> bool:
+    return (
+        supplied.code is not expected.code
+        or supplied.category is not expected.category
+        or (not expected.retryable and supplied.retryable)
+    )
 
 
 def _json_safe_detail_value(value: Any) -> object | None:

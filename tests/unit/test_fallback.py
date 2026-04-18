@@ -4,11 +4,13 @@ from typing import Any
 
 import pytest
 from contracts.schemas.reasoner import ReasonerErrorCategory
+from pydantic import ValidationError
 
 from reasoner_runtime.config import ProviderProfile
 from reasoner_runtime.core import ReasonerRequest, StructuredGenerationResult
 from reasoner_runtime.providers import (
     FailureClass,
+    FallbackDecision,
     FallbackExecutionError,
     NoAvailableProviderError,
     ParseValidationError,
@@ -121,6 +123,8 @@ def test_execute_with_fallback_returns_primary_success_decision() -> None:
     assert calls == [("openai/gpt-4", 0)]
     assert result.actual_provider == "openai"
     assert result.actual_model == "gpt-4"
+    assert result.configured_target == "openai/gpt-4"
+    assert result.failure_class == "none"
     assert result.fallback_path == ["openai/gpt-4"]
     assert result.retry_count == 0
     assert decision.failure_class is FailureClass.none
@@ -152,6 +156,8 @@ def test_execute_with_fallback_records_success_with_fallback() -> None:
     assert calls == ["openai/gpt-4", "anthropic/claude-sonnet-4.5"]
     assert result.actual_provider == "anthropic"
     assert result.actual_model == "claude-sonnet-4.5"
+    assert result.configured_target == "openai/gpt-4"
+    assert result.failure_class == "success_with_fallback"
     assert result.fallback_path == calls
     assert decision.failure_class is FailureClass.success_with_fallback
     assert decision.attempts == calls
@@ -286,6 +292,55 @@ def test_failure_class_adapter_returns_contract_error_classification() -> None:
     assert classification.retryable is False
     assert classification.details["failure_class"] == "task_level"
     assert classification.details["target_schema"] == "AnswerPayload"
+
+
+def test_failure_class_adapter_marks_exhausted_quota_as_non_retryable() -> None:
+    classification = to_reasoner_error_classification(
+        FailureClass.infra_level,
+        context={
+            "provider": "openai",
+            "model": "gpt-4",
+            "quota_status": "exhausted",
+        },
+    )
+
+    assert classification is not None
+    assert classification.category is ReasonerErrorCategory.MODEL_PROVIDER
+    assert classification.retryable is False
+
+
+def test_fallback_decision_rejects_mismatched_error_classification() -> None:
+    mismatched = to_reasoner_error_classification(
+        FailureClass.task_level,
+        context={"phase": "parse"},
+    )
+
+    with pytest.raises(ValidationError, match="does not match failure_class"):
+        FallbackDecision(
+            configured_target="openai/gpt-4",
+            failure_class=FailureClass.infra_level,
+            error_classification=mismatched,
+        )
+
+
+def test_fallback_decision_accepts_more_specific_non_retryable_classification() -> None:
+    authentication_error = type("AuthenticationError", (Exception,), {})
+    classification = to_reasoner_error_classification(
+        FailureClass.infra_level,
+        error=authentication_error("invalid api key"),
+        context={"provider": "openai", "model": "gpt-4"},
+    )
+
+    decision = FallbackDecision(
+        configured_target="openai/gpt-4",
+        attempts=["openai/gpt-4"],
+        final_target="openai/gpt-4",
+        failure_class=FailureClass.infra_level,
+        error_classification=classification,
+    )
+
+    assert decision.error_classification is not None
+    assert decision.error_classification.retryable is False
 
 
 @pytest.mark.parametrize(

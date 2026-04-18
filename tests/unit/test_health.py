@@ -34,6 +34,12 @@ class AuthenticationError(Exception):
     pass
 
 
+class StatusError(Exception):
+    def __init__(self, status_code: int, message: str = "provider error") -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 def _status(**overrides: Any) -> ProviderHealthStatus:
     payload = {
         "provider": "openai",
@@ -131,15 +137,30 @@ def test_aggregate_health_statuses_empty_list_does_not_pass_gate() -> None:
     assert report.error_classification.category is ReasonerErrorCategory.INTERNAL
 
 
+def test_aggregate_health_statuses_marks_exhausted_quota_non_retryable() -> None:
+    report = aggregate_health_statuses(
+        [_status(reachable=False, quota_status=QuotaStatus.exhausted)]
+    )
+
+    assert report.error_classification is not None
+    assert report.error_classification.category is ReasonerErrorCategory.MODEL_PROVIDER
+    assert report.error_classification.retryable is False
+
+
 @pytest.mark.parametrize(
     ("error", "reachable", "expected"),
     [
         (None, True, QuotaStatus.ok),
         (RateLimitError("rate limit exceeded"), False, QuotaStatus.limited),
         (RuntimeError("provider response is limited"), False, QuotaStatus.limited),
+        (RuntimeError("provider has unlimited capacity"), False, QuotaStatus.ok),
         (AuthenticationError("invalid api key"), False, QuotaStatus.exhausted),
         (BudgetExceededError("budget exceeded"), False, QuotaStatus.exhausted),
         (RuntimeError("quota exhausted"), False, QuotaStatus.exhausted),
+        (RuntimeError("auth failed"), False, QuotaStatus.exhausted),
+        (RuntimeError("authored response failed"), False, QuotaStatus.ok),
+        (StatusError(401), False, QuotaStatus.exhausted),
+        (StatusError(429), False, QuotaStatus.limited),
         (TimeoutError("timed out"), False, QuotaStatus.ok),
         (ConnectionError("connection refused"), False, QuotaStatus.ok),
     ],
@@ -195,6 +216,19 @@ def test_health_check_uses_fake_probe_for_each_profile_and_normalizes_identity()
         ("openai", "gpt-4"),
         ("anthropic", "claude-sonnet-4.5"),
     ]
+
+
+def test_health_check_default_probe_timeout_contract_is_sequential() -> None:
+    profiles = [_profile("openai", "gpt-4"), _profile("anthropic", "claude")]
+    calls: list[tuple[str, float, int]] = []
+
+    def probe(profile: ProviderProfile, timeout_s: float) -> ProviderHealthStatus:
+        calls.append((profile.provider, timeout_s, len(calls)))
+        return _status(provider=profile.provider, model=profile.model)
+
+    health_check(profiles, probe=probe)
+
+    assert calls == [("openai", 3.0, 0), ("anthropic", 3.0, 1)]
 
 
 def test_health_check_converts_probe_error_and_continues() -> None:

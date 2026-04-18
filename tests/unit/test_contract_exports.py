@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 from contracts.schemas import (
     ReasonerErrorCategory,
     ReasonerHealth as ContractReasonerHealth,
@@ -8,6 +10,7 @@ from contracts.schemas import (
     ReasonerResult as ContractReasonerResult,
 )
 
+from reasoner_runtime._contracts import ensure_contracts_importable
 from reasoner_runtime.core import ReasonerRequest, StructuredGenerationResult
 from reasoner_runtime.health import (
     HealthCheckReport,
@@ -24,6 +27,14 @@ def test_public_runtime_models_are_contract_backed() -> None:
     assert issubclass(StructuredGenerationResult, ContractReasonerResult)
     assert issubclass(ReplayBundle, ContractReasonerReplay)
     assert issubclass(HealthCheckReport, ContractReasonerHealth)
+
+
+def test_contract_import_check_does_not_mutate_sys_path() -> None:
+    before = list(sys.path)
+
+    ensure_contracts_importable()
+
+    assert sys.path == before
 
 
 def test_runtime_request_exports_stable_contract_projection() -> None:
@@ -49,6 +60,26 @@ def test_runtime_request_exports_stable_contract_projection() -> None:
 
 
 def test_replay_bundle_preserves_core_fields_and_contract_envelope() -> None:
+    request = ReasonerRequest(
+        request_id="req-1",
+        caller_module="unit-test",
+        target_schema="EntityResult",
+        messages=[{"role": "user", "content": "hello"}],
+        configured_provider="openai",
+        configured_model="gpt-5.4",
+        max_retries=2,
+        metadata={"cycle_id": "cycle-1"},
+    )
+    result = StructuredGenerationResult(
+        result_id="req-1:result",
+        request_id="req-1",
+        parsed_result={"answer": "ok"},
+        actual_provider="openai",
+        actual_model="gpt-5.4",
+        token_usage={"prompt": 0, "completion": 0, "total": 0},
+        cost_estimate=0,
+        latency_ms=0,
+    )
     bundle = ReplayBundle(
         sanitized_input="hello",
         input_hash="input-hash",
@@ -62,6 +93,8 @@ def test_replay_bundle_preserves_core_fields_and_contract_envelope() -> None:
             "fallback_path": ["openai/gpt-5.4"],
             "retry_count": 0,
         },
+        request=request.to_contract(),
+        result=result.to_contract(),
     )
 
     assert {

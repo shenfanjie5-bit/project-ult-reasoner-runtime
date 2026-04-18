@@ -74,15 +74,51 @@ def verify_dependency_hashes(
     return errors
 
 
+def verify_all_requirements_locked(path: Path) -> list[str]:
+    errors: list[str] = []
+    for logical_line in _logical_requirement_lines(path):
+        if logical_line.startswith("-"):
+            continue
+
+        match = _REQUIREMENT_RE.match(logical_line)
+        if match is None or not match.group("name"):
+            errors.append(f"unrecognized requirement line: {logical_line}")
+            continue
+
+        package = match.group("name")
+        version = match.group("version") if match.group("operator") == "==" else None
+        hashes = tuple(
+            hash_match.group("hash") for hash_match in _HASH_RE.finditer(logical_line)
+        )
+        if version is None:
+            errors.append(f"{package} must be pinned with ==")
+        if not hashes:
+            errors.append(f"{package} must include a sha256 hash")
+        for hash_value in hashes:
+            if _VALID_SHA256_RE.fullmatch(hash_value) is None:
+                errors.append(f"{package} has an invalid sha256 hash: {hash_value}")
+
+    return errors
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args:
-        print("usage: verify_deps.py REQUIREMENTS [PACKAGE ...]", file=sys.stderr)
+        print(
+            "usage: verify_deps.py REQUIREMENTS [--all] [PACKAGE ...]",
+            file=sys.stderr,
+        )
         return 2
 
     path = Path(args[0])
-    packages = args[1:] or ["litellm", "instructor"]
+    require_all = "--all" in args[1:]
+    packages = [arg for arg in args[1:] if arg != "--all"] or [
+        "litellm",
+        "instructor",
+    ]
     errors = verify_dependency_hashes(path, packages)
+    if require_all:
+        errors.extend(verify_all_requirements_locked(path))
     if errors:
         for error in errors:
             print(error, file=sys.stderr)

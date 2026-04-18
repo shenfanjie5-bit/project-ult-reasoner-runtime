@@ -68,9 +68,9 @@ _ENGLISH_ACCOUNT_PATTERN = re.compile(
     rf"card\s+number|card\s+no\.?)"
     rf"(?![A-Za-z0-9_-])"
     rf"|"
-    rf"\b(?:account|acct|card)\b"
+    rf"\b(?:account|acct|card)(?![A-Za-z0-9_-])"
     rf")"
-    rf"(?:\s*(?:is|=|:|#)\s*|\s+)"
+    rf"(?:\s*(?:is|为|是|=|:|：|#)\s*|\s+)"
     rf")"
     rf"(?P<value>{_ACCOUNT_VALUE_PATTERN})"
     rf"{_ACCOUNT_VALUE_BOUNDARY}",

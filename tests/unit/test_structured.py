@@ -27,7 +27,10 @@ class AnswerPayload(BaseModel):
     score: int
 
 
-def _request(messages: list[dict[str, Any]] | None = None) -> ReasonerRequest:
+def _request(
+    messages: list[dict[str, Any]] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> ReasonerRequest:
     return ReasonerRequest(
         request_id="req-1",
         caller_module="unit-test",
@@ -36,6 +39,7 @@ def _request(messages: list[dict[str, Any]] | None = None) -> ReasonerRequest:
         configured_provider="openai",
         configured_model="gpt-4",
         max_retries=2,
+        metadata=metadata or {},
     )
 
 
@@ -77,6 +81,64 @@ def test_run_structured_call_preserves_messages_and_runtime_fields() -> None:
     assert result.token_usage == {"prompt": 11, "completion": 5, "total": 16}
     assert result.cost_estimate == 0.003
     assert result.latency_ms == 23
+
+
+def test_run_structured_call_passes_provider_metadata_to_create_structured_metadata_only() -> None:
+    client = _CreateStructuredMetadataOnly()
+    request = _request(metadata={"trace_id": "trace-1"})
+
+    run_structured_call(client, request, AnswerPayload)
+
+    assert client.calls[0]["metadata"] == {
+        "trace_id": "trace-1",
+        "reasoner": {
+            "request_id": "req-1",
+            "caller_module": "unit-test",
+            "target_schema": "AnswerPayload",
+            "provider": "openai",
+            "model": "gpt-4",
+        },
+    }
+
+
+def test_run_structured_call_passes_callback_metadata_to_create_structured_callback_only() -> None:
+    client = _CreateStructuredCallbackOnly()
+
+    run_structured_call(client, _request(metadata={"trace_id": "trace-1"}), AnswerPayload)
+
+    assert client.calls[0]["callback_metadata"] == {
+        "request_id": "req-1",
+        "caller_module": "unit-test",
+        "target_schema": "AnswerPayload",
+        "provider": "openai",
+        "model": "gpt-4",
+    }
+
+
+def test_run_structured_call_passes_both_metadata_shapes_when_supported() -> None:
+    client = _CreateStructuredBothMetadataShapes()
+    request = _request(metadata={"trace_id": "trace-1"})
+
+    run_structured_call(client, request, AnswerPayload)
+
+    assert client.calls[0]["metadata"]["trace_id"] == "trace-1"
+    assert client.calls[0]["metadata"]["reasoner"] == client.calls[0][
+        "callback_metadata"
+    ]
+
+
+def test_run_structured_call_omits_metadata_when_client_does_not_support_it() -> None:
+    client = _CreateStructuredNoMetadata()
+
+    result = run_structured_call(client, _request(), AnswerPayload)
+
+    assert client.calls == [
+        {
+            "messages": _request().messages,
+            "response_model": AnswerPayload,
+        }
+    ]
+    assert result.parsed_result == {"answer": "ok", "score": 1}
 
 
 def test_run_structured_call_validates_dict_payload_into_response_model() -> None:
@@ -167,6 +229,24 @@ def test_structured_result_models_reject_negative_runtime_values() -> None:
         )
 
     with pytest.raises(ValidationError):
+        StructuredCallResult(
+            parsed_result={},
+            raw_output="{}",
+            token_usage={"prompt": 0, "completion": 0, "total": 0},
+            cost_estimate=-0.01,
+            latency_ms=0,
+        )
+
+    with pytest.raises(ValidationError):
+        StructuredCallResult(
+            parsed_result={},
+            raw_output="{}",
+            token_usage={"prompt": 0, "completion": 0, "total": 0},
+            cost_estimate=0.0,
+            latency_ms=-1,
+        )
+
+    with pytest.raises(ValidationError):
         StructuredGenerationResult(
             parsed_result={},
             actual_provider="openai",
@@ -177,6 +257,28 @@ def test_structured_result_models_reject_negative_runtime_values() -> None:
             latency_ms=0,
         )
 
+    with pytest.raises(ValidationError):
+        StructuredGenerationResult(
+            parsed_result={},
+            actual_provider="openai",
+            actual_model="gpt-4",
+            retry_count=0,
+            token_usage={"prompt": 0, "completion": 0, "total": 0},
+            cost_estimate=-0.01,
+            latency_ms=0,
+        )
+
+    with pytest.raises(ValidationError):
+        StructuredGenerationResult(
+            parsed_result={},
+            actual_provider="openai",
+            actual_model="gpt-4",
+            retry_count=0,
+            token_usage={"prompt": 0, "completion": 0, "total": 0},
+            cost_estimate=0.0,
+            latency_ms=-1,
+        )
+
 
 def test_provider_profile_rejects_invalid_numeric_values() -> None:
     with pytest.raises(ValidationError):
@@ -184,6 +286,9 @@ def test_provider_profile_rejects_invalid_numeric_values() -> None:
 
     with pytest.raises(ValidationError):
         ProviderProfile(provider="openai", model="gpt-4", rate_limit_rpm=0)
+
+    with pytest.raises(ValidationError):
+        ProviderProfile(provider="openai", model="gpt-4", fallback_priority=-1)
 
 
 class _FakeCompletions:
@@ -198,3 +303,97 @@ class _FakeCompletions:
     def create(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
         return self.response
+
+
+class _CreateStructuredMetadataOnly:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def create_structured(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        response_model: type[BaseModel],
+        metadata: dict[str, Any],
+    ) -> StructuredCallResult:
+        self.calls.append(
+            {
+                "messages": messages,
+                "response_model": response_model,
+                "metadata": metadata,
+            }
+        )
+        return _structured_result()
+
+
+class _CreateStructuredCallbackOnly:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def create_structured(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        response_model: type[BaseModel],
+        callback_metadata: dict[str, Any],
+    ) -> StructuredCallResult:
+        self.calls.append(
+            {
+                "messages": messages,
+                "response_model": response_model,
+                "callback_metadata": callback_metadata,
+            }
+        )
+        return _structured_result()
+
+
+class _CreateStructuredBothMetadataShapes:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def create_structured(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        response_model: type[BaseModel],
+        metadata: dict[str, Any],
+        callback_metadata: dict[str, Any],
+    ) -> StructuredCallResult:
+        self.calls.append(
+            {
+                "messages": messages,
+                "response_model": response_model,
+                "metadata": metadata,
+                "callback_metadata": callback_metadata,
+            }
+        )
+        return _structured_result()
+
+
+class _CreateStructuredNoMetadata:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def create_structured(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        response_model: type[BaseModel],
+    ) -> StructuredCallResult:
+        self.calls.append(
+            {
+                "messages": messages,
+                "response_model": response_model,
+            }
+        )
+        return _structured_result()
+
+
+def _structured_result() -> StructuredCallResult:
+    return StructuredCallResult(
+        parsed_result={"answer": "ok", "score": 1},
+        raw_output='{"answer":"ok","score":1}',
+        token_usage={"prompt": 1, "completion": 1, "total": 2},
+        cost_estimate=0.0,
+        latency_ms=1,
+    )
