@@ -106,6 +106,20 @@ def test_scrub_text_redacts_account_identifier_variants() -> None:
         assert raw_value not in scrubbed
 
 
+def test_scrub_text_redacts_english_account_labels_with_chinese_separators() -> None:
+    samples = [
+        ("account：acct_123456", "acct_123456"),
+        ("acct为acct-123456", "acct-123456"),
+        ("card是6222021234567890123", "6222021234567890123"),
+    ]
+
+    for source, raw_value in samples:
+        scrubbed = scrub_text(source)
+
+        assert "[REDACTED_ACCOUNT]" in scrubbed
+        assert raw_value not in scrubbed
+
+
 def test_scrub_text_uses_account_id_labels_as_field_boundaries() -> None:
     scrubbed = scrub_text("name Alice account_id=acct_123456")
 

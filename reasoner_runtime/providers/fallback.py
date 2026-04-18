@@ -166,10 +166,17 @@ def execute_with_fallback(
                 had_infra_failure = True
                 break
             else:
+                failure_class = (
+                    FailureClass.success_with_fallback
+                    if had_infra_failure
+                    else FailureClass.none
+                )
                 result = result.model_copy(
                     update={
                         "actual_provider": profile.provider,
                         "actual_model": profile.model,
+                        "configured_target": configured_target,
+                        "failure_class": failure_class.value,
                         "fallback_path": attempts.copy(),
                         "retry_count": retry_index,
                     }
@@ -178,11 +185,7 @@ def execute_with_fallback(
                     configured_target=configured_target,
                     attempts=attempts.copy(),
                     final_target=target,
-                    failure_class=(
-                        FailureClass.success_with_fallback
-                        if had_infra_failure
-                        else FailureClass.none
-                    ),
+                    failure_class=failure_class,
                 )
                 return result, decision
 

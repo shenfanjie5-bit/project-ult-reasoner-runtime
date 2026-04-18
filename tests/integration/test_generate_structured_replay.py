@@ -77,6 +77,8 @@ def test_generate_structured_with_replay_returns_result_and_bundle() -> None:
     assert bundle.llm_lineage == {
         "provider": result.actual_provider,
         "model": result.actual_model,
+        "configured_target": "openai/gpt-4",
+        "failure_class": "none",
         "fallback_path": result.fallback_path,
         "retry_count": result.retry_count,
     }

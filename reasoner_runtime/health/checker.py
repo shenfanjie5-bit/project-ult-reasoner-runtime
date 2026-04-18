@@ -10,7 +10,8 @@ from reasoner_runtime.health.models import (
     ProviderHealthStatus,
     QuotaStatus,
 )
-from reasoner_runtime.providers.client import _litellm_model_name
+from reasoner_runtime.providers.client import build_litellm_completion_kwargs
+from reasoner_runtime.providers.models import provider_quota_status_from_error
 from reasoner_runtime.scrub import scrub_text
 
 
@@ -63,10 +64,12 @@ def probe_provider(
         from litellm import completion
 
         completion(
-            model=_litellm_model_name(profile),
-            messages=[{"role": "user", "content": "health check"}],
-            max_tokens=1,
-            timeout=_effective_timeout_s(profile, timeout_s),
+            **build_litellm_completion_kwargs(
+                profile,
+                messages=[{"role": "user", "content": "health check"}],
+                max_tokens=1,
+                timeout_s=timeout_s,
+            )
         )
     except Exception as error:
         latency_ms = int((perf_counter() - started_at) * 1000)
@@ -89,10 +92,6 @@ def probe_provider(
     )
 
 
-def _effective_timeout_s(profile: ProviderProfile, timeout_s: float) -> float:
-    return min(timeout_s, profile.timeout_ms / 1000)
-
-
 def _quota_status_from_error(
     error: Exception | None,
     reachable: bool,
@@ -102,41 +101,7 @@ def _quota_status_from_error(
     if error is None:
         return QuotaStatus.ok
 
-    class_names = " ".join(cls.__name__.lower() for cls in type(error).mro())
-    message = str(error).lower()
-    combined = f"{class_names} {message}"
-
-    exhausted_markers = (
-        "authenticationerror",
-        "auth",
-        "unauthorized",
-        "forbidden",
-        "invalid api key",
-        "api key",
-        "budgetexceeded",
-        "budget exceeded",
-        "quotaexceeded",
-        "quota exceeded",
-        "quota exhausted",
-        "insufficient_quota",
-        "billing",
-        "credits exhausted",
-    )
-    limited_markers = (
-        "ratelimiterror",
-        "rate limit",
-        "rate_limit",
-        "too many requests",
-        "limited",
-        " 429",
-    )
-
-    if any(marker in combined for marker in exhausted_markers):
-        return QuotaStatus.exhausted
-    if any(marker in combined for marker in limited_markers):
-        return QuotaStatus.limited
-
-    return QuotaStatus.ok
+    return QuotaStatus(provider_quota_status_from_error(error))
 
 
 def _safe_error_summary(error: Exception) -> str:

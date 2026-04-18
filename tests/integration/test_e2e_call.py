@@ -108,6 +108,8 @@ def test_generate_structured_with_replay_e2e_scrub_fallback_replay_contract() ->
     assert bundle.llm_lineage == {
         "provider": "anthropic",
         "model": "claude-sonnet-4.5",
+        "configured_target": "openai/gpt-4",
+        "failure_class": "success_with_fallback",
         "fallback_path": result.fallback_path,
         "retry_count": 0,
     }
@@ -115,10 +117,26 @@ def test_generate_structured_with_replay_e2e_scrub_fallback_replay_contract() ->
     sanitized_payload = json.loads(bundle.sanitized_input)
     for call in calls:
         assert call["messages"] == sanitized_payload["messages"]
-        assert call["metadata"] == sanitized_payload["metadata"]
+        provider_metadata = dict(call["metadata"])
+        reasoner_metadata = provider_metadata.pop("reasoner")
+        assert provider_metadata == sanitized_payload["metadata"]
+        assert reasoner_metadata == {
+            "request_id": "req-e2e",
+            "caller_module": "main-core-smoke",
+            "target_schema": "E2EPayload",
+            "provider": "openai",
+            "model": "gpt-4",
+        }
 
     provider_payload = json.dumps(
-        {"messages": calls[-1]["messages"], "metadata": calls[-1]["metadata"]},
+        {
+            "messages": calls[-1]["messages"],
+            "metadata": {
+                key: value
+                for key, value in calls[-1]["metadata"].items()
+                if key != "reasoner"
+            },
+        },
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),

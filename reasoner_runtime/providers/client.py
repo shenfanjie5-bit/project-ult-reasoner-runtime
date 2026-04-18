@@ -32,14 +32,18 @@ class LiteLLMInstructorClient:
             }
         )
         provider_metadata["reasoner"] = reasoner_metadata
-        kwargs = {
-            "model": self.litellm_model,
-            "messages": messages,
-            "response_model": response_model,
-            "max_retries": self.max_retries,
-            "timeout": self.profile.timeout_ms / 1000,
-            "metadata": provider_metadata,
-        }
+        kwargs = build_litellm_completion_kwargs(
+            self.profile,
+            messages=messages,
+            timeout_s=self.profile.timeout_ms / 1000,
+            metadata=provider_metadata,
+        )
+        kwargs.update(
+            {
+                "response_model": response_model,
+                "max_retries": self.max_retries,
+            }
+        )
 
         completions = self.instructor_client.chat.completions
         if hasattr(completions, "create_with_completion"):
@@ -52,7 +56,7 @@ def build_client(profile: ProviderProfile, max_retries: int) -> Any:
     if max_retries < 0:
         raise ValueError("max_retries must be greater than or equal to 0")
 
-    litellm_model = _litellm_model_name(profile)
+    litellm_model = litellm_model_name(profile)
 
     return LiteLLMInstructorClient(
         profile=profile,
@@ -74,7 +78,28 @@ def _create_instructor_client() -> Any:
     return instructor.from_litellm(completion)
 
 
-def _litellm_model_name(profile: ProviderProfile) -> str:
+def build_litellm_completion_kwargs(
+    profile: ProviderProfile,
+    *,
+    messages: list[dict[str, Any]],
+    timeout_s: float,
+    max_tokens: int | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "model": litellm_model_name(profile),
+        "messages": messages,
+        "timeout": min(timeout_s, profile.timeout_ms / 1000),
+    }
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
+    if metadata is not None:
+        kwargs["metadata"] = dict(metadata)
+
+    return kwargs
+
+
+def litellm_model_name(profile: ProviderProfile) -> str:
     if "/" in profile.model:
         provider_prefix, _, _ = profile.model.partition("/")
         if provider_prefix != profile.provider:
@@ -85,3 +110,7 @@ def _litellm_model_name(profile: ProviderProfile) -> str:
         return profile.model
 
     return f"{profile.provider}/{profile.model}"
+
+
+def _litellm_model_name(profile: ProviderProfile) -> str:
+    return litellm_model_name(profile)

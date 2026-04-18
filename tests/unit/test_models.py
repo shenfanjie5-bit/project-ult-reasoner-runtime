@@ -19,6 +19,32 @@ from reasoner_runtime.providers import FailureClass, FallbackDecision
 from reasoner_runtime.replay import ReplayBundle
 
 
+def _contract_request() -> object:
+    return ReasonerRequest(
+        request_id="req-replay",
+        caller_module="unit-test",
+        target_schema="EntityResult",
+        messages=[{"role": "user", "content": "hello"}],
+        configured_provider="openai",
+        configured_model="gpt-5.4",
+        max_retries=2,
+        metadata={"cycle_id": "cycle-replay"},
+    ).to_contract()
+
+
+def _contract_result() -> object:
+    return StructuredGenerationResult(
+        result_id="req-replay:result",
+        request_id="req-replay",
+        parsed_result={"answer": "ok"},
+        actual_provider="openai",
+        actual_model="gpt-5.4",
+        token_usage={"prompt": 0, "completion": 0, "total": 0},
+        cost_estimate=0,
+        latency_ms=0,
+    ).to_contract()
+
+
 def test_reasoner_request_constructs_with_required_fields() -> None:
     request = ReasonerRequest(
         request_id="req-1",
@@ -114,6 +140,8 @@ def test_structured_generation_result_defaults() -> None:
 
     assert result.fallback_path == []
     assert result.retry_count == 0
+    assert result.configured_target is None
+    assert result.failure_class == "none"
 
 
 def test_replay_bundle_constructs_with_core_five_fields() -> None:
@@ -124,6 +152,8 @@ def test_replay_bundle_constructs_with_core_five_fields() -> None:
         parsed_result={"answer": "ok"},
         output_hash="hash",
         llm_lineage={"provider": "openai", "model": "gpt-5.4"},
+        request=_contract_request(),
+        result=_contract_result(),
     )
 
     assert bundle.sanitized_input == "hello"
@@ -142,6 +172,26 @@ def test_replay_bundle_requires_each_core_field(missing_field: str) -> None:
         "parsed_result": {},
         "output_hash": "output-hash",
         "llm_lineage": {},
+        "request": _contract_request(),
+        "result": _contract_result(),
+    }
+    payload.pop(missing_field)
+
+    with pytest.raises(ValidationError):
+        ReplayBundle(**payload)
+
+
+@pytest.mark.parametrize("missing_field", ["request", "result"])
+def test_replay_bundle_requires_contract_identity(missing_field: str) -> None:
+    payload = {
+        "sanitized_input": "hello",
+        "input_hash": "input-hash",
+        "raw_output": "{}",
+        "parsed_result": {},
+        "output_hash": "output-hash",
+        "llm_lineage": {},
+        "request": _contract_request(),
+        "result": _contract_result(),
     }
     payload.pop(missing_field)
 
