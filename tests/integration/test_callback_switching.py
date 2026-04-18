@@ -22,6 +22,7 @@ from tests.unit.test_callback_regression import (
     _request,
     _run_generation,
     _schema_registry,
+    _without_dynamic_contract_times,
 )
 
 
@@ -144,8 +145,12 @@ def test_callback_backend_failure_isolated_during_switching(
         callback_backends=[recorder],
     )
 
-    assert result.model_dump() == baseline_result.model_dump()
-    assert bundle.model_dump() == baseline_bundle.model_dump()
+    assert _without_dynamic_contract_times(result.model_dump()) == (
+        _without_dynamic_contract_times(baseline_result.model_dump())
+    )
+    assert _without_dynamic_contract_times(bundle.model_dump()) == (
+        _without_dynamic_contract_times(baseline_bundle.model_dump())
+    )
     assert result.fallback_path == EXPECTED_FALLBACK_PATH
     assert result.retry_count == 0
     assert len(recorder.starts) == 1
