@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from typing import Annotated, Protocol, runtime_checkable
 
+from reasoner_runtime._contracts import ensure_contracts_importable
+
+ensure_contracts_importable()
+
+from contracts.schemas.reasoner import ReasonerErrorClassification
 from pydantic import BaseModel, Field
 
 
@@ -30,6 +35,7 @@ class CallbackError(BaseModel):
     error_type: str
     error_message: str
     failure_class: str | None = None
+    error_classification: ReasonerErrorClassification | None = None
     latency_ms: NonNegativeInt | None = None
 
 

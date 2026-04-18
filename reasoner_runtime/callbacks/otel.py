@@ -82,6 +82,22 @@ class OTELCallbackBackend:
             _set_attribute(span, "llm.error_message", error.error_message)
             if error.failure_class is not None:
                 _set_attribute(span, "llm.failure_class", error.failure_class)
+            if error.error_classification is not None:
+                _set_attribute(
+                    span,
+                    "llm.error_classification.code",
+                    error.error_classification.code.value,
+                )
+                _set_attribute(
+                    span,
+                    "llm.error_classification.category",
+                    error.error_classification.category.value,
+                )
+                _set_attribute(
+                    span,
+                    "llm.error_classification.retryable",
+                    str(error.error_classification.retryable).lower(),
+                )
             if error.latency_ms is not None:
                 _set_attribute(span, "llm.latency_ms", error.latency_ms)
             if hasattr(span, "set_status"):

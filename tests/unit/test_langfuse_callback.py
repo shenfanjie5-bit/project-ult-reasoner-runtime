@@ -20,6 +20,7 @@ from reasoner_runtime.callbacks import (
 from reasoner_runtime.callbacks import factory as callback_factory
 from reasoner_runtime.callbacks.langfuse import _build_default_client
 from reasoner_runtime.config import CallbackProfile, load_callback_profile
+from reasoner_runtime.providers import to_reasoner_error_classification
 
 
 _FORBIDDEN_PAYLOAD_KEYS = {
@@ -117,6 +118,11 @@ def test_langfuse_error_scrubs_and_truncates_metadata() -> None:
             error_type="RuntimeError",
             error_message=raw_message,
             failure_class="infra_level",
+            error_classification=to_reasoner_error_classification(
+                "infra_level",
+                error=ConnectionError("provider unavailable"),
+                context={"provider": "openai", "model": "gpt-4"},
+            ),
             latency_ms=19,
         ),
     )
@@ -127,6 +133,8 @@ def test_langfuse_error_scrubs_and_truncates_metadata() -> None:
     assert event["name"] == "reasoner.llm.error"
     assert metadata["error_type"] == "RuntimeError"
     assert metadata["failure_class"] == "infra_level"
+    assert metadata["error_classification"]["category"] == "model_provider"
+    assert metadata["error_classification"]["code"] == "REASONER_MODEL_PROVIDER_ERROR"
     assert metadata["latency_ms"] == 19
     assert len(error_message) <= 500
     assert error_message.endswith("...")

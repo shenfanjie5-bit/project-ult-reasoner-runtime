@@ -10,6 +10,10 @@ from reasoner_runtime.callbacks.base import (
     CallbackError,
     CallbackSuccess,
 )
+from reasoner_runtime.providers.models import (
+    FailureClass,
+    to_reasoner_error_classification,
+)
 from reasoner_runtime.scrub import scrub_text
 
 
@@ -67,6 +71,7 @@ class LiteLLMCallbackBridge:
                 error_type=error_type,
                 error_message=error_message,
                 failure_class=_extract_failure_class(kwargs),
+                error_classification=_extract_error_classification(kwargs, context),
                 latency_ms=_extract_latency_ms(None, start_time, end_time),
             )
         except Exception:
@@ -283,6 +288,38 @@ def _extract_failure_class(kwargs: Mapping[str, Any]) -> str | None:
     if value is None:
         return None
     return _string_value(getattr(value, "value", value))
+
+
+def _extract_error_classification(
+    kwargs: Mapping[str, Any],
+    context: CallbackContext,
+) -> Any:
+    metadata = _extract_reasoner_metadata(kwargs)
+    failure_class = _extract_failure_class(kwargs) or FailureClass.infra_level
+    target = (
+        f"{context.provider}/{context.model}"
+        if context.provider and context.model
+        else ""
+    )
+    return to_reasoner_error_classification(
+        failure_class,
+        error=_extract_exception(kwargs),
+        context={
+            **metadata,
+            "failure_source": "provider",
+            "provider": context.provider,
+            "model": context.model,
+            "target": target,
+        },
+    )
+
+
+def _extract_exception(kwargs: Mapping[str, Any]) -> BaseException | None:
+    for key in ("exception", "error", "original_exception"):
+        value = kwargs.get(key)
+        if isinstance(value, BaseException):
+            return value
+    return None
 
 
 def _extract_error_details(kwargs: Mapping[str, Any]) -> tuple[str, str]:

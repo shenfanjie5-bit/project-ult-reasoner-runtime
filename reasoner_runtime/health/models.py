@@ -58,8 +58,13 @@ class HealthCheckReport(ContractReasonerHealth):
         values.setdefault("checked_at", checked_at)
         values.setdefault(
             "status",
-            HeartbeatStatus.OK if all_available else HeartbeatStatus.DEGRADED,
+            _health_status(all_available, provider_statuses),
         )
+        if not all_available and values.get("error_classification") is None:
+            values["error_classification"] = _health_error_classification(
+                provider_statuses,
+                unavailable_count,
+            )
         values.setdefault("last_success_at", checked_at if all_available else None)
         values.setdefault("pending_count", unavailable_count)
         return values
@@ -78,3 +83,66 @@ def _provider_status_unavailable(status: object) -> bool:
         )
 
     return True
+
+
+def _health_status(
+    all_available: bool,
+    provider_statuses: list[object],
+) -> HeartbeatStatus:
+    if all_available:
+        return HeartbeatStatus.OK
+    if not provider_statuses:
+        return HeartbeatStatus.FAILED
+    return HeartbeatStatus.DEGRADED
+
+
+def _health_error_classification(
+    provider_statuses: list[object],
+    unavailable_count: int,
+) -> object:
+    from reasoner_runtime.providers.models import (
+        FailureClass,
+        to_reasoner_error_classification,
+    )
+
+    unavailable_status = next(
+        (status for status in provider_statuses if _provider_status_unavailable(status)),
+        None,
+    )
+    if unavailable_status is None:
+        return to_reasoner_error_classification(
+            FailureClass.infra_level,
+            context={
+                "failure_source": "health",
+                "pending_count": unavailable_count,
+            },
+            message="no provider/model targets were checked",
+        )
+
+    provider = _status_field(unavailable_status, "provider")
+    model = _status_field(unavailable_status, "model")
+    return to_reasoner_error_classification(
+        FailureClass.infra_level,
+        context={
+            "failure_source": "health",
+            "provider": provider,
+            "model": model,
+            "target": f"{provider}/{model}" if provider and model else "",
+            "quota_status": _status_field(unavailable_status, "quota_status"),
+            "reachable": _status_field(unavailable_status, "reachable"),
+            "error": _status_field(unavailable_status, "error"),
+        },
+        message="provider health check failed",
+    )
+
+
+def _status_field(status: object, field_name: str) -> object | None:
+    if isinstance(status, BaseModel):
+        value = getattr(status, field_name, None)
+    elif isinstance(status, dict):
+        value = status.get(field_name)
+    else:
+        return None
+    if isinstance(value, Enum):
+        return value.value
+    return value

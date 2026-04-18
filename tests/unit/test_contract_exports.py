@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contracts.schemas import (
+    ReasonerErrorCategory,
     ReasonerHealth as ContractReasonerHealth,
     ReasonerReplay as ContractReasonerReplay,
     ReasonerRequest as ContractReasonerRequest,
@@ -14,6 +15,7 @@ from reasoner_runtime.health import (
     QuotaStatus,
     aggregate_health_statuses,
 )
+from reasoner_runtime.providers import FailureClass
 from reasoner_runtime.replay import ReplayBundle
 
 
@@ -109,3 +111,31 @@ def test_health_report_is_provider_model_contract_structure() -> None:
     assert report.all_critical_targets_available is False
     assert contract.subsystem_id == "reasoner-runtime"
     assert contract.pending_count == 1
+    assert contract.error_classification is not None
+    assert (
+        contract.error_classification.category
+        is ReasonerErrorCategory.MODEL_PROVIDER
+    )
+
+
+def test_failed_structured_result_projects_contract_error_classification() -> None:
+    result = StructuredGenerationResult(
+        status="failed",
+        failure_class=FailureClass.task_level,
+        parsed_result={},
+        actual_provider="openai",
+        actual_model="gpt-5.4",
+        token_usage={"prompt": 0, "completion": 0, "total": 0},
+        cost_estimate=0,
+        latency_ms=0,
+    )
+
+    contract = result.to_contract()
+
+    assert type(contract) is ContractReasonerResult
+    assert contract.status.value == "failed"
+    assert contract.error_classification is not None
+    assert (
+        contract.error_classification.category
+        is ReasonerErrorCategory.INPUT_CONTRACT
+    )

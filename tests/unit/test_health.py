@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from contracts.core import HeartbeatStatus
+from contracts.schemas.reasoner import ReasonerErrorCategory
 from pydantic import ValidationError
 
 from reasoner_runtime.config import ProviderProfile
@@ -112,6 +114,11 @@ def test_aggregate_health_statuses_fails_on_unreachable_or_quota_issue(
 
     assert report.all_critical_targets_available is False
     assert "unavailable" in report.summary
+    assert report.error_classification is not None
+    assert report.error_classification.category in {
+        ReasonerErrorCategory.MODEL_PROVIDER,
+        ReasonerErrorCategory.TIMEOUT,
+    }
 
 
 def test_aggregate_health_statuses_empty_list_does_not_pass_gate() -> None:
@@ -119,6 +126,9 @@ def test_aggregate_health_statuses_empty_list_does_not_pass_gate() -> None:
 
     assert report.provider_statuses == []
     assert report.all_critical_targets_available is False
+    assert report.status is HeartbeatStatus.FAILED
+    assert report.error_classification is not None
+    assert report.error_classification.category is ReasonerErrorCategory.INTERNAL
 
 
 @pytest.mark.parametrize(

@@ -10,6 +10,7 @@ ensure_contracts_importable()
 from contracts.schemas.reasoner import (
     ReasonerRequest as ContractReasonerRequest,
     ReasonerResult as ContractReasonerResult,
+    ReasonerStatus,
 )
 from pydantic import BaseModel, Field, model_validator
 
@@ -100,6 +101,7 @@ class StructuredGenerationResult(ContractReasonerResult):
             return data
 
         values = dict(data)
+        failure_class = values.pop("failure_class", None)
         parsed_result = values.get("parsed_result")
         output = parsed_result if isinstance(parsed_result, dict) else {}
 
@@ -110,6 +112,24 @@ class StructuredGenerationResult(ContractReasonerResult):
         values.setdefault("reasoner_version", _RUNTIME_CONTRACT_VERSION)
         values.setdefault("output", output)
         values.setdefault("completed_at", datetime.now(UTC))
+        if (
+            values.get("status") in {ReasonerStatus.FAILED, ReasonerStatus.FAILED.value}
+            and values.get("error_classification") is None
+        ):
+            from reasoner_runtime.providers.models import (
+                FailureClass,
+                to_reasoner_error_classification,
+            )
+
+            values["error_classification"] = to_reasoner_error_classification(
+                failure_class or FailureClass.infra_level,
+                context={
+                    "provider": values.get("actual_provider"),
+                    "model": values.get("actual_model"),
+                    "fallback_path": values.get("fallback_path", []),
+                    "retry_count": values.get("retry_count", 0),
+                },
+            )
         return values
 
     def to_contract(self) -> ContractReasonerResult:
