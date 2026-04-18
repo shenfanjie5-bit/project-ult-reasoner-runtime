@@ -39,6 +39,7 @@ from reasoner_runtime.providers import (
     ParseValidationError,
     build_client,
     execute_with_fallback,
+    to_reasoner_error_classification,
 )
 from reasoner_runtime.replay import (
     ReplayBundle,
@@ -355,6 +356,7 @@ def _emit_callback_error(
         error_type=type(error).__name__,
         error_message=scrub_text(str(error)),
         failure_class=_callback_failure_class(error),
+        error_classification=_callback_error_classification(request, error),
         latency_ms=max(int((perf_counter() - started_at) * 1000), 0),
     )
     for backend in backends:
@@ -397,6 +399,49 @@ def _callback_failure_class(error: Exception) -> str:
     if isinstance(error, ParseValidationError):
         return "task_level"
     return "infra_level"
+
+
+def _callback_error_classification(
+    request: ReasonerRequest,
+    error: Exception,
+) -> Any:
+    if isinstance(error, FallbackExecutionError):
+        if error.decision.error_classification is not None:
+            return error.decision.error_classification
+        return to_reasoner_error_classification(
+            error.decision.failure_class,
+            error=error.last_error,
+            context={
+                "configured_target": error.decision.configured_target,
+                "attempts": error.decision.attempts,
+                "final_target": error.decision.final_target,
+                "request_id": request.request_id,
+                "caller_module": request.caller_module,
+                "target_schema": request.target_schema,
+            },
+        )
+    if isinstance(error, ParseValidationError):
+        return to_reasoner_error_classification(
+            "task_level",
+            error=error,
+            context={
+                "phase": "parse",
+                "request_id": request.request_id,
+                "caller_module": request.caller_module,
+                "target_schema": request.target_schema,
+            },
+        )
+    return to_reasoner_error_classification(
+        "infra_level",
+        error=error,
+        context={
+            "provider": request.configured_provider,
+            "model": request.configured_model,
+            "request_id": request.request_id,
+            "caller_module": request.caller_module,
+            "target_schema": request.target_schema,
+        },
+    )
 
 
 def _normalize_request(request: ReasonerRequest) -> ReasonerRequest:

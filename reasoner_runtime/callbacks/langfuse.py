@@ -153,6 +153,10 @@ def _error_metadata(error: CallbackError) -> dict[str, Any]:
         "error_message": _truncate(scrub_text(error.error_message).strip()),
         "failure_class": error.failure_class,
     }
+    if error.error_classification is not None:
+        metadata["error_classification"] = error.error_classification.model_dump(
+            mode="json"
+        )
     if error.latency_ms is not None:
         metadata["latency_ms"] = error.latency_ms
     return metadata

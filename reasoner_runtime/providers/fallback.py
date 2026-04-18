@@ -4,7 +4,11 @@ from collections.abc import Callable
 
 from reasoner_runtime.config.models import ProviderProfile
 from reasoner_runtime.core.models import ReasonerRequest, StructuredGenerationResult
-from reasoner_runtime.providers.models import FailureClass, FallbackDecision
+from reasoner_runtime.providers.models import (
+    FailureClass,
+    FallbackDecision,
+    to_reasoner_error_classification,
+)
 from reasoner_runtime.providers.routing import (
     NoAvailableProviderError,
     ParseValidationError,
@@ -80,6 +84,11 @@ def execute_with_fallback(
             configured_target=configured_target,
             failure_class=FailureClass.infra_level,
             terminal_reason=str(error),
+            error_classification=to_reasoner_error_classification(
+                FailureClass.infra_level,
+                error=error,
+                context={"configured_target": configured_target},
+            ),
         )
         raise FallbackExecutionError(decision, error) from error
 
@@ -105,6 +114,19 @@ def execute_with_fallback(
                     final_target=target,
                     failure_class=FailureClass.task_level,
                     terminal_reason=str(error),
+                    error_classification=to_reasoner_error_classification(
+                        FailureClass.task_level,
+                        error=error,
+                        context={
+                            "configured_target": configured_target,
+                            "attempts": attempts.copy(),
+                            "final_target": target,
+                            "provider": profile.provider,
+                            "model": profile.model,
+                            "target": target,
+                            "phase": "parse",
+                        },
+                    ),
                 )
                 raise FallbackExecutionError(decision, error) from error
             except Exception as error:
@@ -125,6 +147,19 @@ def execute_with_fallback(
                         final_target=target,
                         failure_class=FailureClass.task_level,
                         terminal_reason=str(error),
+                        error_classification=to_reasoner_error_classification(
+                            FailureClass.task_level,
+                            error=error,
+                            context={
+                                "configured_target": configured_target,
+                                "attempts": attempts.copy(),
+                                "final_target": target,
+                                "provider": profile.provider,
+                                "model": profile.model,
+                                "target": target,
+                                "failure_source": "provider",
+                            },
+                        ),
                     )
                     raise FallbackExecutionError(decision, error) from error
 
@@ -159,6 +194,15 @@ def execute_with_fallback(
         attempts=attempts.copy(),
         failure_class=FailureClass.infra_level,
         terminal_reason=terminal_reason,
+        error_classification=to_reasoner_error_classification(
+            FailureClass.infra_level,
+            error=last_error,
+            context={
+                "configured_target": configured_target,
+                "attempts": attempts.copy(),
+                "failure_source": "provider" if attempts else "routing",
+            },
+        ),
     )
     raise FallbackExecutionError(decision, last_error)
 

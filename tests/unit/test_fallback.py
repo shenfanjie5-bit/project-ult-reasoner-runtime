@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from contracts.schemas.reasoner import ReasonerErrorCategory
 
 from reasoner_runtime.config import ProviderProfile
 from reasoner_runtime.core import ReasonerRequest, StructuredGenerationResult
@@ -15,6 +16,7 @@ from reasoner_runtime.providers import (
     execute_with_fallback,
     format_provider_target,
     ordered_fallback_chain,
+    to_reasoner_error_classification,
 )
 
 
@@ -245,6 +247,11 @@ def test_execute_with_fallback_exposes_infra_level_when_all_targets_fail() -> No
         execute_with_fallback(_request(), [primary, fallback], call_fn)
 
     assert error.value.decision.failure_class is FailureClass.infra_level
+    assert error.value.decision.error_classification is not None
+    assert (
+        error.value.decision.error_classification.category
+        is ReasonerErrorCategory.MODEL_PROVIDER
+    )
     assert error.value.decision.attempts == [
         "openai/gpt-4",
         "anthropic/claude-sonnet-4.5",
@@ -257,8 +264,28 @@ def test_execute_with_fallback_exposes_infra_level_for_empty_profiles() -> None:
         execute_with_fallback(_request(), [], lambda request, profile, retry: _result())
 
     assert error.value.decision.failure_class is FailureClass.infra_level
+    assert error.value.decision.error_classification is not None
+    assert (
+        error.value.decision.error_classification.category
+        is ReasonerErrorCategory.INTERNAL
+    )
     assert error.value.decision.attempts == []
     assert isinstance(error.value.last_error, NoAvailableProviderError)
+
+
+def test_failure_class_adapter_returns_contract_error_classification() -> None:
+    classification = to_reasoner_error_classification(
+        FailureClass.task_level,
+        error=ParseValidationError("invalid structured output"),
+        context={"phase": "parse", "target_schema": "AnswerPayload"},
+    )
+
+    assert classification is not None
+    assert classification.category is ReasonerErrorCategory.INPUT_CONTRACT
+    assert classification.code.value == "REASONER_INPUT_CONTRACT_ERROR"
+    assert classification.retryable is False
+    assert classification.details["failure_class"] == "task_level"
+    assert classification.details["target_schema"] == "AnswerPayload"
 
 
 @pytest.mark.parametrize(

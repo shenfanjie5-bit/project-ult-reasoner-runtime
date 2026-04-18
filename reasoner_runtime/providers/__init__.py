@@ -5,7 +5,11 @@ from reasoner_runtime.providers.fallback import (
     format_provider_target,
     ordered_fallback_chain,
 )
-from reasoner_runtime.providers.models import FailureClass, FallbackDecision
+from reasoner_runtime.providers.models import (
+    FailureClass,
+    FallbackDecision,
+    to_reasoner_error_classification,
+)
 from reasoner_runtime.providers.routing import (
     NoAvailableProviderError,
     ParseValidationError,
@@ -29,4 +33,5 @@ __all__ = [
     "format_provider_target",
     "ordered_fallback_chain",
     "select_provider",
+    "to_reasoner_error_classification",
 ]

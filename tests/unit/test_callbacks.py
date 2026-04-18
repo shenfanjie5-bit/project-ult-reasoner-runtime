@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Any
 
+from contracts.schemas.reasoner import ReasonerErrorCategory
 from pydantic import BaseModel
 
 from reasoner_runtime.callbacks import (
@@ -16,6 +17,7 @@ from reasoner_runtime.callbacks import (
     configure_litellm_callbacks,
 )
 from reasoner_runtime.core import ReasonerRequest
+from reasoner_runtime.providers import to_reasoner_error_classification
 from reasoner_runtime.structured import run_structured_call
 
 
@@ -89,6 +91,11 @@ def test_otel_error_records_failure_and_marks_status_error() -> None:
             error_type="ConnectionError",
             error_message="provider unavailable",
             failure_class="infra_level",
+            error_classification=to_reasoner_error_classification(
+                "infra_level",
+                error=ConnectionError("provider unavailable"),
+                context={"provider": "openai", "model": "gpt-4"},
+            ),
             latency_ms=9,
         ),
     )
@@ -98,6 +105,12 @@ def test_otel_error_records_failure_and_marks_status_error() -> None:
     assert span.attributes["llm.error_type"] == "ConnectionError"
     assert span.attributes["llm.error_message"] == "provider unavailable"
     assert span.attributes["llm.failure_class"] == "infra_level"
+    assert (
+        span.attributes["llm.error_classification.code"]
+        == "REASONER_MODEL_PROVIDER_ERROR"
+    )
+    assert span.attributes["llm.error_classification.category"] == "model_provider"
+    assert span.attributes["llm.error_classification.retryable"] == "true"
     assert span.attributes["llm.latency_ms"] == 9
     assert _status_code_name(span.status) == "ERROR"
 
@@ -187,6 +200,9 @@ def test_litellm_bridge_failure_extracts_object_shape_and_isolates_backends() ->
     assert context.model == "gpt-4"
     assert error.error_type == "TimeoutError"
     assert error.error_message == "request timed out"
+    assert error.error_classification is not None
+    assert error.error_classification.category is ReasonerErrorCategory.TIMEOUT
+    assert error.error_classification.retryable is True
     assert error.latency_ms == 5
 
 
