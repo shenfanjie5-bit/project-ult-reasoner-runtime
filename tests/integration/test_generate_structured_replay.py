@@ -24,9 +24,10 @@ class ReplayPayload(BaseModel):
 def _request(
     messages: list[dict[str, Any]] | None = None,
     metadata: dict[str, Any] | None = None,
+    request_id: str = "req-replay",
 ) -> ReasonerRequest:
     return ReasonerRequest(
-        request_id="req-replay",
+        request_id=request_id,
         caller_module="integration-test",
         target_schema="ReplayPayload",
         messages=messages or [{"role": "user", "content": "return a replay payload"}],
@@ -184,6 +185,49 @@ def test_generate_structured_with_replay_scrubs_replay_contract_audit_fields() -
     assert contract.result.request_id == request.request_id
     assert contract.result.reasoner_version == result.reasoner_version
     assert contract.result.reasoner_version == contract.request.reasoner_version
+
+
+def test_generate_structured_with_replay_preserves_distinct_pii_request_id_surrogates() -> None:
+    profile = ProviderProfile(provider="openai", model="gpt-4", fallback_priority=0)
+    raw_phones = ["415-555-2671", "212-555-0199"]
+    request_ids: list[str] = []
+    result_ids: list[str] = []
+
+    for index, raw_phone in enumerate(raw_phones):
+        raw_output = f'{{"score":{index + 1},"answer":"ok"}}'
+        client = _FakeStructuredClient(
+            StructuredCallResult(
+                parsed_result={"answer": "ok", "score": index + 1},
+                raw_output=raw_output,
+                token_usage={"prompt": 4, "completion": 4, "total": 8},
+                cost_estimate=0.01,
+                latency_ms=9,
+            )
+        )
+        request = _request(request_id=f"req phone {raw_phone}")
+
+        result, bundle = generate_structured_with_replay(
+            request,
+            provider_profiles=[profile],
+            schema_registry={"ReplayPayload": ReplayPayload},
+            client_factory=lambda _profile, _max_retries, client=client: client,
+        )
+
+        contract = bundle.to_contract()
+        contract_json = contract.model_dump_json()
+
+        assert raw_phone not in contract_json
+        assert contract.request.request_id.startswith(
+            "req phone [REDACTED_PHONE] [sha256:"
+        )
+        assert contract.result.request_id == contract.request.request_id
+        assert result.request_id == contract.request.request_id
+        assert contract.result.result_id == result.result_id
+        request_ids.append(contract.request.request_id)
+        result_ids.append(contract.result.result_id)
+
+    assert len(set(request_ids)) == len(raw_phones)
+    assert len(set(result_ids)) == len(raw_phones)
 
 
 def test_generate_structured_keeps_structured_result_return_type() -> None:

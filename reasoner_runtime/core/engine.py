@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from json import JSONDecodeError
@@ -283,7 +284,10 @@ def _build_scrubbed_runtime_request(
 ) -> ReasonerRequest:
     return request.model_copy(
         update={
-            "request_id": scrub_text(request.request_id, scrub_rule_set),
+            "request_id": _scrubbed_request_identity(
+                request.request_id,
+                scrub_rule_set,
+            ),
             "caller_module": scrub_text(request.caller_module, scrub_rule_set),
             "target_schema": scrub_text(request.target_schema, scrub_rule_set),
             "messages": scrubbed.messages,
@@ -306,6 +310,18 @@ def _build_scrubbed_runtime_request(
             "input_refs": scrub_payload(list(request.input_refs), scrub_rule_set),
         }
     )
+
+
+def _scrubbed_request_identity(
+    request_id: str,
+    scrub_rule_set: ScrubRuleSet | None,
+) -> str:
+    scrubbed = scrub_text(request_id, scrub_rule_set)
+    if scrubbed == request_id:
+        return request_id
+
+    digest = hashlib.sha256(request_id.encode("utf-8")).hexdigest()
+    return f"{scrubbed} [sha256:{digest}]"
 
 
 def _scrubbed_contract_metadata_field(
