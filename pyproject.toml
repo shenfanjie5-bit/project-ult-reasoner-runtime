@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "project-ult-reasoner-runtime"
-version = "0.1.0"
-description = "Scaffold workspace for reasoner-runtime."
+version = "0.1.1"
+description = "LLM structured-output gateway with replay/scrub/health for project-ult."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -15,6 +15,19 @@ dependencies = [
     "litellm==1.83.0",
     "instructor==1.15.1",
     "opentelemetry-api==1.31.1",
+]
+
+[project.optional-dependencies]
+# Pure-pip dev tools — offline-first per SUBPROJECT_TESTING_STANDARD.md §2.2.
+# Used by test-fast / smoke CI lanes. Never includes git+URL deps.
+dev = [
+    "pytest>=8",
+]
+# Shared regression fixtures bundled with project-ult-audit-eval.
+# Separate extra so the regression lane is the only place pulling in a
+# git+URL dependency (codex review #3 of stage 2.1 — re-applied here).
+shared-fixtures = [
+    "project-ult-audit-eval @ git+https://github.com/shenfanjie5-bit/project-ult-audit-eval.git@v0.2.0",
 ]
 
 [tool.setuptools]

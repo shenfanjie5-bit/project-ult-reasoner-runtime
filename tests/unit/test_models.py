@@ -315,7 +315,7 @@ def test_dependency_lock_entry_constructs() -> None:
 
 
 def test_top_level_exports_key_models() -> None:
-    assert reasoner_runtime.__version__ == "0.1.0"
+    assert reasoner_runtime.__version__ == "0.1.1"
     assert reasoner_runtime.ReasonerRequest is ReasonerRequest
     assert reasoner_runtime.ReplayBundle is ReplayBundle
     assert reasoner_runtime.ProviderProfile is ProviderProfile

@@ -27,7 +27,7 @@ from reasoner_runtime.providers import (
 from reasoner_runtime.replay import ReplayBundle, build_replay_bundle
 from reasoner_runtime.scrub import scrub_input
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "CallbackProfile",
