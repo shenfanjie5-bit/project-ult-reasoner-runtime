@@ -17,8 +17,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install cross-project dep (contracts)
-        run: pip install "git+https://github.com/shenfanjie5-bit/project-ult-contracts.git@main"
+      - name: Install cross-project dep (contracts pinned, iron rule #6)
+        run: pip install "git+https://github.com/shenfanjie5-bit/project-ult-contracts.git@v0.1.2"
       - name: Install (full)
         run: pip install -e ".[dev,shared-fixtures]"
       - name: Tests
@@ -36,8 +36,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install cross-project dep (contracts)
-        run: pip install "git+https://github.com/shenfanjie5-bit/project-ult-contracts.git@main"
+      - name: Install cross-project dep (contracts pinned, iron rule #6)
+        run: pip install "git+https://github.com/shenfanjie5-bit/project-ult-contracts.git@v0.1.2"
       - name: Install (offline-first dev only)
         run: pip install -e ".[dev]"
       - name: test-fast (unit + boundary)
@@ -50,8 +50,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install cross-project dep (contracts)
-        run: pip install "git+https://github.com/shenfanjie5-bit/project-ult-contracts.git@main"
+      - name: Install cross-project dep (contracts pinned, iron rule #6)
+        run: pip install "git+https://github.com/shenfanjie5-bit/project-ult-contracts.git@v0.1.2"
       - name: Install (offline-first dev only)
         run: pip install -e ".[dev]"
       - name: smoke
@@ -64,8 +64,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install cross-project dep (contracts)
-        run: pip install "git+https://github.com/shenfanjie5-bit/project-ult-contracts.git@main"
+      - name: Install cross-project dep (contracts pinned, iron rule #6)
+        run: pip install "git+https://github.com/shenfanjie5-bit/project-ult-contracts.git@v0.1.2"
       - name: Install (with shared-fixtures git extra)
         run: pip install -e ".[dev,shared-fixtures]"
       - name: regression (must really consume audit_eval_fixtures)

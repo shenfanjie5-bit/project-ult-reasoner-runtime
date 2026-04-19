@@ -27,7 +27,10 @@ dev = [
 # Separate extra so the regression lane is the only place pulling in a
 # git+URL dependency (codex review #3 of stage 2.1 — re-applied here).
 shared-fixtures = [
-    "project-ult-audit-eval @ git+https://github.com/shenfanjie5-bit/project-ult-audit-eval.git@v0.2.0",
+    # Pinned to v0.2.1 (real sha256 fixture hashes for stage 2.2 follow-up
+    # — required by tests/regression/test_with_shared_fixtures.py
+    # TestReplayHashesRoundTripAgainstRuntime).
+    "project-ult-audit-eval @ git+https://github.com/shenfanjie5-bit/project-ult-audit-eval.git@v0.2.1",
 ]
 
 [tool.setuptools]
