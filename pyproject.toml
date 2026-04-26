@@ -44,6 +44,7 @@ packages = [
     "reasoner_runtime.core",
     "reasoner_runtime.health",
     "reasoner_runtime.providers",
+    "reasoner_runtime.providers.auth",
     "reasoner_runtime.replay",
     "reasoner_runtime.scrub",
     "reasoner_runtime.structured",

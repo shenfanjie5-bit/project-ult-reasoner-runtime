@@ -178,6 +178,30 @@ def test_example_provider_config_is_parseable() -> None:
     assert profiles[1].model
 
 
+@pytest.mark.parametrize(
+    ("selector", "provider", "model"),
+    [
+        ("minimax", "minimax", "MiniMax-M2.5"),
+        ("codex", "openai-codex", "gpt-5.5"),
+        ("claude_code", "claude-code", "claude-sonnet-4-6"),
+    ],
+)
+def test_three_backend_example_loads_selected_backend_only(
+    selector: str,
+    provider: str,
+    model: str,
+) -> None:
+    profiles = load_provider_profiles(
+        Path("config/providers.three-backends.example.yaml"),
+        selector=selector,
+    )
+
+    assert len(profiles) == 1
+    assert profiles[0].provider == provider
+    assert profiles[0].model == model
+    assert profiles[0].fallback_priority == 0
+
+
 def test_example_scrub_config_is_parseable() -> None:
     rule_set = load_scrub_rules(Path("config/scrub.example.yaml"))
 

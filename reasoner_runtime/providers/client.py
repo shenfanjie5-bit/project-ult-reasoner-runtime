@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from reasoner_runtime.config.models import ProviderProfile
 from reasoner_runtime.providers.routing import ProviderConfigError
+
+_CODEX_GATE_ENV = "REASONER_RUNTIME_ENABLE_CODEX_OAUTH"
+_CLAUDE_CODE_GATE_ENV = "REASONER_RUNTIME_ENABLE_CLAUDE_CODE_CLI"
 
 
 @dataclass(frozen=True)
@@ -55,6 +59,26 @@ class LiteLLMInstructorClient:
 def build_client(profile: ProviderProfile, max_retries: int) -> Any:
     if max_retries < 0:
         raise ValueError("max_retries must be greater than or equal to 0")
+
+    if profile.provider == "openai-codex":
+        if os.environ.get(_CODEX_GATE_ENV) != "1":
+            raise ProviderConfigError(
+                f"openai-codex provider is gated; set {_CODEX_GATE_ENV}=1 to enable"
+            )
+        from reasoner_runtime.providers.codex_client import build_codex_client
+
+        return build_codex_client(profile, max_retries)
+
+    if profile.provider == "claude-code":
+        if os.environ.get(_CLAUDE_CODE_GATE_ENV) != "1":
+            raise ProviderConfigError(
+                f"claude-code provider is gated; set {_CLAUDE_CODE_GATE_ENV}=1 to enable"
+            )
+        from reasoner_runtime.providers.claude_code_cli_client import (
+            build_claude_code_cli_client,
+        )
+
+        return build_claude_code_cli_client(profile, max_retries)
 
     litellm_model = litellm_model_name(profile)
 
