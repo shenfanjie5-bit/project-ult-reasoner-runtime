@@ -97,18 +97,20 @@ def test_replay_bundle_preserves_core_fields_and_contract_envelope() -> None:
         result=result.to_contract(),
     )
 
-    assert {
+    replay_field_names = {
         "sanitized_input",
         "input_hash",
         "raw_output",
         "parsed_result",
         "output_hash",
-    } <= set(ReplayBundle.model_fields)
+    }
+    assert replay_field_names <= set(ReplayBundle.model_fields)
     assert set(ContractReasonerReplay.model_fields) <= set(ReplayBundle.model_fields)
 
     contract = bundle.to_contract()
 
-    assert type(contract) is ContractReasonerReplay
+    assert isinstance(contract, ContractReasonerReplay)
+    assert replay_field_names <= set(contract.model_dump())
     assert contract.request.request_id == "req-1"
     assert contract.result.output == {"answer": "ok"}
 

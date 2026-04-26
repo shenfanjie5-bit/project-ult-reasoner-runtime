@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, ClassVar
 
 from reasoner_runtime._contracts import ensure_contracts_importable
 
@@ -12,11 +12,18 @@ from pydantic import ConfigDict, Field, model_validator
 
 from reasoner_runtime.core.models import (
     _RUNTIME_CONTRACT_VERSION,
-    _contract_projection,
 )
 
 
 class ReplayBundle(ContractReasonerReplay):
+    replay_field_names: ClassVar[tuple[str, ...]] = (
+        "sanitized_input",
+        "input_hash",
+        "raw_output",
+        "parsed_result",
+        "output_hash",
+    )
+
     model_config = ConfigDict(
         extra="forbid",
         str_strip_whitespace=False,
@@ -51,4 +58,4 @@ class ReplayBundle(ContractReasonerReplay):
         return self
 
     def to_contract(self) -> ContractReasonerReplay:
-        return _contract_projection(self, ContractReasonerReplay)
+        return self

@@ -152,8 +152,11 @@ def test_generate_structured_with_replay_contract_keeps_request_identity() -> No
     )
 
     contract = bundle.to_contract()
+    contract_payload = contract.model_dump()
     assert contract.request.request_id == request.request_id
     assert contract.result.request_id == request.request_id
+    for replay_field_name in ReplayBundle.replay_field_names:
+        assert contract_payload[replay_field_name] == getattr(bundle, replay_field_name)
 
 
 def test_generate_structured_keeps_structured_result_return_type() -> None:
