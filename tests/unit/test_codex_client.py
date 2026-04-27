@@ -34,6 +34,10 @@ class _Echo(BaseModel):
     answer: str
 
 
+class _NestedMappingEcho(BaseModel):
+    items: list[dict[str, Any]]
+
+
 def _b64url(payload: dict[str, Any]) -> str:
     return base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).rstrip(b"=").decode("ascii")
 
@@ -149,6 +153,32 @@ def test_codex_client_sends_required_headers_and_payload() -> None:
     assert result.parsed_result == {"answer": "pong"}
     assert result.token_usage == {"prompt": 12, "completion": 4, "total": 16}
     assert result.cost_estimate == 0.0
+
+
+def test_codex_client_rewrites_nested_mapping_schemas_to_strict_objects() -> None:
+    response = SimpleNamespace(
+        status_code=200,
+        headers={"content-type": "text/event-stream"},
+        text=_sse_completed_event(json.dumps({"items": []})),
+    )
+    http = _FakeHttp(response)
+    client = build_codex_client(
+        _profile(),
+        0,
+        auth_source=_StaticAuthSource(_fresh_creds()),
+        http=http,
+    )
+
+    client.create_structured(
+        messages=[{"role": "user", "content": "empty"}],
+        response_model=_NestedMappingEcho,
+    )
+
+    item_schema = http.calls[0]["json"]["text"]["format"]["schema"]["properties"][
+        "items"
+    ]["items"]
+    assert item_schema["type"] == "object"
+    assert item_schema["additionalProperties"] is False
 
 
 def test_codex_client_strips_provider_prefix_from_model() -> None:

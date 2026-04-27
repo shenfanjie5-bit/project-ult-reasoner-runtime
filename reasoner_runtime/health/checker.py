@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from time import perf_counter
 
+from pydantic import BaseModel
+
 from reasoner_runtime.config.models import ProviderProfile
 from reasoner_runtime.health.aggregator import aggregate_health_statuses
 from reasoner_runtime.health.models import (
@@ -10,7 +12,10 @@ from reasoner_runtime.health.models import (
     ProviderHealthStatus,
     QuotaStatus,
 )
-from reasoner_runtime.providers.client import build_litellm_completion_kwargs
+from reasoner_runtime.providers.client import (
+    build_client,
+    build_litellm_completion_kwargs,
+)
 from reasoner_runtime.providers.models import provider_quota_status_from_error
 from reasoner_runtime.scrub import scrub_text
 
@@ -18,6 +23,11 @@ from reasoner_runtime.scrub import scrub_text
 HealthProbe = Callable[[ProviderProfile, float], ProviderHealthStatus]
 
 _ERROR_SUMMARY_LIMIT = 240
+_STRUCTURED_HEALTH_PROBE_PROVIDERS = frozenset({"openai-codex", "claude-code"})
+
+
+class _StructuredHealthProbeResponse(BaseModel):
+    ok: bool
 
 
 def health_check(
@@ -59,6 +69,9 @@ def probe_provider(
     profile: ProviderProfile,
     timeout_s: float = 3.0,
 ) -> ProviderHealthStatus:
+    if profile.provider in _STRUCTURED_HEALTH_PROBE_PROVIDERS:
+        return _probe_structured_provider(profile, timeout_s)
+
     started_at = perf_counter()
     try:
         from litellm import completion
@@ -90,6 +103,61 @@ def probe_provider(
         latency_ms=max(latency_ms, 0),
         quota_status=QuotaStatus.ok,
     )
+
+
+def _probe_structured_provider(
+    profile: ProviderProfile,
+    timeout_s: float,
+) -> ProviderHealthStatus:
+    started_at = perf_counter()
+    bounded_profile = profile.model_copy(
+        update={"timeout_ms": min(profile.timeout_ms, max(int(timeout_s * 1000), 1))}
+    )
+    client = None
+    try:
+        client = build_client(bounded_profile, max_retries=0)
+        result = client.create_structured(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Return compact JSON matching the schema.",
+                },
+                {"role": "user", "content": '{"ok": true}'},
+            ],
+            response_model=_StructuredHealthProbeResponse,
+            metadata={"reasoner_runtime_health_check": True},
+        )
+        parsed = getattr(result, "parsed_result", None)
+        if not isinstance(parsed, dict) or parsed.get("ok") is not True:
+            raise RuntimeError("structured health probe returned an invalid payload")
+    except Exception as error:
+        latency_ms = int((perf_counter() - started_at) * 1000)
+        return ProviderHealthStatus(
+            provider=profile.provider,
+            model=profile.model,
+            reachable=False,
+            latency_ms=max(latency_ms, 0),
+            quota_status=_quota_status_from_error(error, reachable=False),
+            error=_safe_error_summary(error),
+        )
+    finally:
+        _close_provider_client(client)
+
+    latency_ms = int((perf_counter() - started_at) * 1000)
+    return ProviderHealthStatus(
+        provider=profile.provider,
+        model=profile.model,
+        reachable=True,
+        latency_ms=max(latency_ms, 0),
+        quota_status=QuotaStatus.ok,
+    )
+
+
+def _close_provider_client(client: object | None) -> None:
+    http = getattr(client, "http", None)
+    close = getattr(http, "close", None)
+    if callable(close):
+        close()
 
 
 def _quota_status_from_error(

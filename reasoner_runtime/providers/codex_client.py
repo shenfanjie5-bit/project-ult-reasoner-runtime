@@ -245,7 +245,7 @@ def _to_strict_schema(schema: Any) -> Any:
     if isinstance(schema, dict):
         rewritten: dict[str, Any] = {key: _to_strict_schema(value) for key, value in schema.items()}
         if rewritten.get("type") == "object" or "properties" in rewritten:
-            rewritten.setdefault("additionalProperties", False)
+            rewritten["additionalProperties"] = False
             properties = rewritten.get("properties")
             if isinstance(properties, dict):
                 rewritten["required"] = list(properties.keys())

@@ -276,3 +276,50 @@ def test_probe_provider_uses_strictest_timeout_and_normalized_model(
 
     probe_provider(_profile("openai", "gpt-4", timeout_ms=30000), timeout_s=3.0)
     assert calls[1]["timeout"] == 3.0
+
+
+def test_probe_provider_uses_structured_client_for_codex(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import reasoner_runtime.health.checker as checker
+
+    calls: list[tuple[ProviderProfile, int]] = []
+
+    class FakeStructuredClient:
+        def __init__(self) -> None:
+            self.http = type("FakeHttp", (), {"close": lambda self: None})()
+
+        def create_structured(
+            self,
+            *,
+            messages: list[dict[str, Any]],
+            response_model: type[Any],
+            metadata: dict[str, Any],
+        ) -> object:
+            assert messages
+            assert metadata["reasoner_runtime_health_check"] is True
+            return type("Result", (), {"parsed_result": {"ok": True}})()
+
+    def build_client(profile: ProviderProfile, max_retries: int) -> object:
+        calls.append((profile, max_retries))
+        return FakeStructuredClient()
+
+    monkeypatch.setattr(checker, "build_client", build_client)
+
+    status = probe_provider(
+        _profile("openai-codex", "gpt-5.5", timeout_ms=60000),
+        timeout_s=5.0,
+    )
+
+    assert status.reachable is True
+    assert status.quota_status is QuotaStatus.ok
+    assert calls == [
+        (
+            ProviderProfile(
+                provider="openai-codex",
+                model="gpt-5.5",
+                timeout_ms=5000,
+            ),
+            0,
+        )
+    ]
