@@ -35,6 +35,20 @@ def _context() -> CallbackContext:
     )
 
 
+def _trace_context() -> CallbackContext:
+    return CallbackContext(
+        request_id="req-1",
+        caller_module="unit-test",
+        target_schema="CallbackPayload",
+        provider="openai",
+        model="gpt-4",
+        cycle_id="CYCLE_20260501",
+        ticker="ENT_STOCK_300750.SZ",
+        analyzer_type="single_prompt_v1",
+        regime_label="neutral",
+    )
+
+
 def _request() -> ReasonerRequest:
     return ReasonerRequest(
         request_id="req-1",
@@ -79,6 +93,24 @@ def test_otel_success_records_stable_non_pii_attributes() -> None:
     assert span.attributes["llm.fallback_path.length"] == 2
     assert span.attributes["llm.failure_class"] == "success_with_fallback"
     assert not {"messages", "raw_output", "parsed_result"} & span.attributes.keys()
+
+
+def test_otel_success_records_trace_metadata() -> None:
+    tracer = _FakeTracer()
+    backend = OTELCallbackBackend(tracer=tracer)
+
+    backend.on_success(_trace_context(), CallbackSuccess())
+
+    span = tracer.spans[0]
+    assert span.attributes["reasoner.cycle_id"] == "CYCLE_20260501"
+    assert span.attributes["reasoner.ticker"] == "ENT_STOCK_300750.SZ"
+    assert span.attributes["reasoner.analyzer_type"] == "single_prompt_v1"
+    assert span.attributes["reasoner.regime_label"] == "neutral"
+    assert span.attributes["reasoner.session_id"] == (
+        "CYCLE_20260501_ENT_STOCK_300750.SZ"
+    )
+    assert span.attributes["reasoner.user_id"] == "ENT_STOCK_300750.SZ"
+    assert span.attributes["reasoner.tags"] == "L6,single_prompt_v1,neutral"
 
 
 def test_otel_error_records_failure_and_marks_status_error() -> None:

@@ -127,14 +127,38 @@ def _invoke_client(
     )
 
 
+_TRACE_METADATA_KEYS: tuple[str, ...] = (
+    "cycle_id",
+    "ticker",
+    "analyzer_type",
+    "regime_label",
+)
+
+
 def _build_callback_metadata(request: ReasonerRequest) -> dict[str, Any]:
-    return {
+    """Build the metadata block read by LiteLLM callbacks.
+
+    spec v5.0.1 §14A.3 four trace fields (`cycle_id`, `ticker`,
+    `analyzer_type`, `regime_label`) flow through `request.metadata` from
+    the caller (main-core L6/L7). They are surfaced here so the LiteLLM
+    callback bridge can read them out of the nested `reasoner` block and
+    expose them on `CallbackContext`.
+    """
+
+    metadata = {
         "request_id": request.request_id,
         "caller_module": request.caller_module,
         "target_schema": request.target_schema,
         "provider": request.configured_provider,
         "model": request.configured_model,
     }
+    request_metadata = request.metadata or {}
+    for key in _TRACE_METADATA_KEYS:
+        value = request_metadata.get(key)
+        if value is None:
+            continue
+        metadata[key] = str(value)
+    return metadata
 
 
 def _call_with_optional_metadata(

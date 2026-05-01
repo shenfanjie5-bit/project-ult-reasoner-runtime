@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from json import JSONDecodeError
@@ -53,6 +54,47 @@ from reasoner_runtime.structured import resolve_response_model, run_structured_c
 ClientFactory = Callable[[ProviderProfile, int], Any]
 _INSTRUCTOR_ATTEMPTS_PER_FALLBACK_RETRY = 1
 _RUNTIME_CALLBACK_LOCK = RLock()
+_LOGGER = logging.getLogger(__name__)
+
+# Fan-out failure counter for observability — populated when a callback
+# backend (Langfuse / OTEL / etc.) raises during on_start / on_success /
+# on_error. Keyed by f"{event}:{backend_class_name}". Read via
+# `callback_failure_counts()`. Backed by its own RLock so the hot path
+# can update without contending with the runtime configure lock.
+_CALLBACK_FAILURE_LOCK = RLock()
+_CALLBACK_FAILURES: dict[str, int] = {}
+
+
+def _record_callback_failure(
+    event: str,
+    backend: object,
+    exc: BaseException,
+) -> None:
+    """Log a callback fan-out failure and bump its counter.
+
+    Replaces the previous silent `except Exception: continue` swallow so
+    misconfigured Langfuse / OTEL backends surface in the logs and a
+    snapshot is queryable from tests / runbooks.
+    """
+
+    backend_name = type(backend).__name__
+    key = f"{event}:{backend_name}"
+    with _CALLBACK_FAILURE_LOCK:
+        _CALLBACK_FAILURES[key] = _CALLBACK_FAILURES.get(key, 0) + 1
+    _LOGGER.warning(
+        "reasoner-runtime callback %s failed (backend=%s): %s",
+        event,
+        backend_name,
+        exc,
+        exc_info=True,
+    )
+
+
+def callback_failure_counts() -> Mapping[str, int]:
+    """Return a read-only snapshot of callback fan-out failure counts."""
+
+    with _CALLBACK_FAILURE_LOCK:
+        return dict(_CALLBACK_FAILURES)
 
 
 def generate_structured(
@@ -310,7 +352,8 @@ def _emit_callback_start(
     for backend in backends:
         try:
             backend.on_start(context)
-        except Exception:
+        except Exception as exc:
+            _record_callback_failure("on_start", backend, exc)
             continue
 
 
@@ -339,7 +382,8 @@ def _emit_callback_success(
     for backend in backends:
         try:
             backend.on_success(context, success)
-        except Exception:
+        except Exception as exc:
+            _record_callback_failure("on_success", backend, exc)
             continue
 
 
@@ -364,8 +408,22 @@ def _emit_callback_error(
     for backend in backends:
         try:
             backend.on_error(context, callback_error)
-        except Exception:
+        except Exception as exc:
+            _record_callback_failure("on_error", backend, exc)
             continue
+
+
+_TRACE_METADATA_KEYS: tuple[str, ...] = (
+    "cycle_id",
+    "ticker",
+    "analyzer_type",
+    "regime_label",
+)
+
+
+def _trace_metadata_value(metadata: dict[str, Any], key: str) -> str:
+    value = metadata.get(key) if metadata else None
+    return "" if value is None else str(value)
 
 
 def _callback_context(
@@ -374,12 +432,17 @@ def _callback_context(
     provider: str,
     model: str,
 ) -> CallbackContext:
+    metadata = request.metadata or {}
     return CallbackContext(
         request_id=request.request_id,
         caller_module=request.caller_module,
         target_schema=request.target_schema,
         provider=provider,
         model=model,
+        cycle_id=_trace_metadata_value(metadata, "cycle_id"),
+        ticker=_trace_metadata_value(metadata, "ticker"),
+        analyzer_type=_trace_metadata_value(metadata, "analyzer_type"),
+        regime_label=_trace_metadata_value(metadata, "regime_label"),
     )
 
 

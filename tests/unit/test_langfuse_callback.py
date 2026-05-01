@@ -56,6 +56,23 @@ def test_langfuse_start_records_context_metadata_only() -> None:
     _assert_no_payload_keys(event["metadata"])
 
 
+def test_langfuse_start_records_trace_metadata() -> None:
+    client = _FakeEventClient()
+    backend = LangfuseCallbackBackend(client=client)
+
+    backend.on_start(_trace_context())
+
+    metadata = client.events[0]["metadata"]
+    assert metadata["cycle_id"] == "CYCLE_20260501"
+    assert metadata["ticker"] == "ENT_STOCK_300750.SZ"
+    assert metadata["analyzer_type"] == "single_prompt_v1"
+    assert metadata["regime_label"] == "neutral"
+    assert metadata["session_id"] == "CYCLE_20260501_ENT_STOCK_300750.SZ"
+    assert metadata["user_id"] == "ENT_STOCK_300750.SZ"
+    assert metadata["tags"] == ["L6", "single_prompt_v1", "neutral"]
+    _assert_no_payload_keys(metadata)
+
+
 def test_langfuse_backend_supports_create_event_client_shape() -> None:
     client = _FakeCreateEventClient()
     backend = LangfuseCallbackBackend(client=client)
@@ -274,6 +291,20 @@ def _context() -> CallbackContext:
         target_schema="LangfusePayload",
         provider="openai",
         model="gpt-4",
+    )
+
+
+def _trace_context() -> CallbackContext:
+    return CallbackContext(
+        request_id="req-langfuse",
+        caller_module="unit-test",
+        target_schema="LangfusePayload",
+        provider="openai",
+        model="gpt-4",
+        cycle_id="CYCLE_20260501",
+        ticker="ENT_STOCK_300750.SZ",
+        analyzer_type="single_prompt_v1",
+        regime_label="neutral",
     )
 
 

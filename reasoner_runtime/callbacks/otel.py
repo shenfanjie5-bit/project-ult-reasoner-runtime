@@ -122,9 +122,25 @@ class OTELCallbackBackend:
             "reasoner.request_id": context.request_id,
             "reasoner.caller_module": context.caller_module,
             "reasoner.target_schema": context.target_schema,
+            "reasoner.cycle_id": context.cycle_id,
+            "reasoner.ticker": context.ticker,
+            "reasoner.analyzer_type": context.analyzer_type,
+            "reasoner.regime_label": context.regime_label,
             "llm.provider": context.provider,
             "llm.model": context.model,
         }
+        if context.cycle_id and context.ticker:
+            context_attributes["reasoner.session_id"] = (
+                f"{context.cycle_id}_{context.ticker}"
+            )
+            context_attributes["reasoner.user_id"] = context.ticker
+        if context.analyzer_type or context.regime_label:
+            tags = [
+                tag
+                for tag in ("L6", context.analyzer_type, context.regime_label)
+                if tag
+            ]
+            context_attributes["reasoner.tags"] = ",".join(tags)
         for key, value in context_attributes.items():
             if value:
                 _set_attribute(span, key, value)
