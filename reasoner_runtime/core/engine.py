@@ -82,11 +82,11 @@ def _record_callback_failure(
     with _CALLBACK_FAILURE_LOCK:
         _CALLBACK_FAILURES[key] = _CALLBACK_FAILURES.get(key, 0) + 1
     _LOGGER.warning(
-        "reasoner-runtime callback %s failed (backend=%s): %s",
+        "reasoner-runtime callback %s failed "
+        "(backend=%s, exception_type=%s)",
         event,
         backend_name,
-        exc,
-        exc_info=True,
+        type(exc).__name__,
     )
 
 

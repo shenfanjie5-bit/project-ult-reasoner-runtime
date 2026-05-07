@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sys
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -302,6 +303,70 @@ def test_litellm_bridge_failure_scrubs_and_truncates_explicit_error_messages() -
     assert "Alice" not in error.error_message
     assert "13800138000" not in error.error_message
     assert "123456789012" not in error.error_message
+
+
+def test_litellm_bridge_backend_failure_log_omits_raw_exception(
+    caplog: Any,
+) -> None:
+    class _SensitiveRaisingBackend:
+        def on_error(self, context: CallbackContext, error: CallbackError) -> None:
+            raise RuntimeError(
+                "sensitive provider data phone 13800138000 "
+                "SENSITIVE_DATABASE_SECRET"
+            )
+
+    bridge = LiteLLMCallbackBridge([_SensitiveRaisingBackend()])
+
+    with caplog.at_level(logging.WARNING, logger="reasoner_runtime.callbacks.litellm"):
+        bridge.failure_handler(
+            {
+                "model": "openai/gpt-4",
+                "metadata": {"reasoner": {"request_id": "req-safe-log"}},
+                "exception": TimeoutError("provider timeout"),
+            },
+            None,
+            30.0,
+            30.002,
+        )
+
+    rendered = "\n".join(record.getMessage() for record in caplog.records)
+    assert "litellm failure callback backend" in rendered
+    assert "exception_type=RuntimeError" in rendered
+    assert "13800138000" not in rendered
+    assert "SENSITIVE_DATABASE_SECRET" not in rendered
+    assert "[REDACTED_PHONE]" not in rendered
+    assert all(record.exc_info is None for record in caplog.records)
+
+
+def test_litellm_bridge_extraction_failure_log_omits_raw_exception(
+    caplog: Any,
+    monkeypatch: Any,
+) -> None:
+    def _raise_sensitive_context(_kwargs: Any) -> CallbackContext:
+        raise RuntimeError(
+            "prompt phone 13800138000 credential SENSITIVE_CREDENTIAL_VALUE"
+        )
+
+    monkeypatch.setattr(
+        "reasoner_runtime.callbacks.litellm._build_context",
+        _raise_sensitive_context,
+    )
+    bridge = LiteLLMCallbackBridge([_RecordingBackend()])
+
+    with caplog.at_level(logging.WARNING, logger="reasoner_runtime.callbacks.litellm"):
+        bridge.success_handler(
+            {"model": "openai/gpt-4"},
+            None,
+            1.0,
+            1.001,
+        )
+
+    rendered = "\n".join(record.getMessage() for record in caplog.records)
+    assert "payload extraction failed" in rendered
+    assert "exception_type=RuntimeError" in rendered
+    assert "13800138000" not in rendered
+    assert "SENSITIVE_CREDENTIAL_VALUE" not in rendered
+    assert all(record.exc_info is None for record in caplog.records)
 
 
 def test_configure_litellm_callbacks_registers_once(monkeypatch: Any) -> None:

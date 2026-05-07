@@ -187,6 +187,49 @@ def test_input_handler_scrubs_and_logs_warning_on_unscrubbed_pii(
     )
 
 
+def test_input_handler_scrubs_structured_message_content(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    bridge = litellm_callbacks.LiteLLMCallbackBridge(backends=())
+    kwargs: dict[str, Any] = {
+        "metadata": {"reasoner": {"request_id": "req_structured"}},
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "name Alice phone 13800138000",
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.test/chart.png"},
+                    },
+                ],
+            },
+        ],
+    }
+
+    with caplog.at_level(logging.WARNING, logger="reasoner_runtime.callbacks.litellm"):
+        bridge.input_handler(kwargs)
+
+    content = kwargs["messages"][0]["content"]
+    assert isinstance(content, list)
+    assert content[0]["type"] == "text"
+    assert "[REDACTED_NAME]" in content[0]["text"]
+    assert "[REDACTED_PHONE]" in content[0]["text"]
+    assert "Alice" not in content[0]["text"]
+    assert "13800138000" not in content[0]["text"]
+    assert content[1] == {
+        "type": "image_url",
+        "image_url": {"url": "https://example.test/chart.png"},
+    }
+    assert any(
+        "input_callback scrubbed direct-call PII" in record.getMessage()
+        for record in caplog.records
+    )
+
+
 def test_input_handler_does_not_warn_on_scrubbed_messages(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import hashlib
-from copy import deepcopy
+import logging
 from collections.abc import Iterator, Sequence
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -22,9 +23,12 @@ from reasoner_runtime.config import CallbackProfile, ProviderProfile
 from reasoner_runtime.core import (
     ReasonerRequest,
     StructuredGenerationResult,
+    callback_failure_counts,
     generate_structured,
     generate_structured_with_replay,
 )
+import reasoner_runtime.core.engine as core_engine
+from reasoner_runtime.providers import FallbackExecutionError
 from reasoner_runtime.replay import ReplayBundle
 
 
@@ -129,6 +133,103 @@ def test_generate_structured_return_shape_is_stable_across_callback_backends() -
         assert result.fallback_path == EXPECTED_FALLBACK_PATH
 
 
+def test_callback_failure_counts_increment_without_altering_generation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _SensitiveRaisingBackend:
+        def on_start(self, context: CallbackContext) -> None:
+            raise RuntimeError(
+                "callback start prompt phone 13800138000 "
+                "SENSITIVE_DATABASE_SECRET"
+            )
+
+        def on_success(
+            self,
+            context: CallbackContext,
+            success: CallbackSuccess,
+        ) -> None:
+            raise RuntimeError(
+                "callback success prompt phone 13800138000 "
+                "SENSITIVE_DATABASE_SECRET"
+            )
+
+        def on_error(self, context: CallbackContext, error: CallbackError) -> None:
+            raise RuntimeError("callback error should not run")
+
+    _clear_callback_failure_counts()
+
+    with caplog.at_level(logging.WARNING, logger="reasoner_runtime.core.engine"):
+        result, _bundle = generate_structured_with_replay(
+            _request(),
+            provider_profiles=_provider_profiles(),
+            schema_registry=_schema_registry(),
+            client_factory=_client_factory(),
+            callback_backends=(_SensitiveRaisingBackend(),),
+        )
+
+    assert result.parsed_result == {"answer": "fallback-ok", "score": 7}
+    assert callback_failure_counts() == {
+        "on_start:_SensitiveRaisingBackend": 1,
+        "on_success:_SensitiveRaisingBackend": 1,
+    }
+    rendered = "\n".join(record.getMessage() for record in caplog.records)
+    assert "exception_type=RuntimeError" in rendered
+    assert "13800138000" not in rendered
+    assert "SENSITIVE_DATABASE_SECRET" not in rendered
+    assert all(record.exc_info is None for record in caplog.records)
+
+
+def test_on_error_callback_failure_preserves_generation_error_and_safe_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sensitive_callback_message = (
+        "callback exporter failed postgresql://callback:password@localhost:5432/prod "
+        "token=CALLBACK_SECRET_TOKEN_123"
+    )
+
+    class _OnErrorRaisingBackend:
+        def on_start(self, context: CallbackContext) -> None:
+            pass
+
+        def on_success(
+            self,
+            context: CallbackContext,
+            success: CallbackSuccess,
+        ) -> None:
+            raise AssertionError("on_success should not run")
+
+        def on_error(self, context: CallbackContext, error: CallbackError) -> None:
+            raise RuntimeError(sensitive_callback_message)
+
+    _clear_callback_failure_counts()
+
+    with caplog.at_level(logging.WARNING, logger="reasoner_runtime.core.engine"):
+        with pytest.raises(FallbackExecutionError) as raised:
+            generate_structured_with_replay(
+                _request(),
+                provider_profiles=_provider_profiles(),
+                schema_registry=_schema_registry(),
+                client_factory=_client_factory(all_fail=True),
+                callback_backends=(_OnErrorRaisingBackend(),),
+            )
+
+    assert isinstance(raised.value.last_error, ConnectionError)
+    assert "anthropic/claude-sonnet-4.5 unavailable" in str(
+        raised.value.last_error
+    )
+    assert "callback exporter failed" not in str(raised.value)
+    assert callback_failure_counts() == {"on_error:_OnErrorRaisingBackend": 1}
+
+    rendered = "\n".join(record.getMessage() for record in caplog.records)
+    assert "reasoner-runtime callback on_error failed" in rendered
+    assert "backend=_OnErrorRaisingBackend" in rendered
+    assert "exception_type=RuntimeError" in rendered
+    assert "postgresql://callback:password@localhost:5432/prod" not in rendered
+    assert "CALLBACK_SECRET_TOKEN_123" not in rendered
+    assert sensitive_callback_message not in rendered
+    assert all(record.exc_info is None for record in caplog.records)
+
+
 def test_callbacks_example_yaml_validates_all_callback_profiles() -> None:
     config_path = Path("config/callbacks.example.yaml")
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -226,6 +327,11 @@ def _without_dynamic_contract_times(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(result, dict):
         result.pop("completed_at", None)
     return stable_payload
+
+
+def _clear_callback_failure_counts() -> None:
+    with core_engine._CALLBACK_FAILURE_LOCK:
+        core_engine._CALLBACK_FAILURES.clear()
 
 
 class _FakeClient:

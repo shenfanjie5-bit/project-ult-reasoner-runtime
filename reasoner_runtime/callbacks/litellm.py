@@ -15,7 +15,7 @@ from reasoner_runtime.providers.models import (
     FailureClass,
     to_reasoner_error_classification,
 )
-from reasoner_runtime.scrub import scrub_text
+from reasoner_runtime.scrub import scrub_payload, scrub_text
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -57,9 +57,9 @@ class LiteLLMCallbackBridge:
                 if not isinstance(message, Mapping):
                     continue
                 content = message.get("content")
-                if not isinstance(content, str) or not content:
+                if content in (None, ""):
                     continue
-                scrubbed = scrub_text(content)
+                scrubbed = scrub_payload(content, scrub_keys=False)
                 if scrubbed != content:
                     if isinstance(message, MutableMapping):
                         message["content"] = scrubbed
@@ -77,9 +77,9 @@ class LiteLLMCallbackBridge:
                     )
         except Exception as exc:  # defense-in-depth must not raise
             _LOGGER.warning(
-                "litellm input_callback PII scrub guard failed: %s",
-                exc,
-                exc_info=True,
+                "litellm input_callback PII scrub guard failed "
+                "(exception_type=%s)",
+                type(exc).__name__,
             )
 
     def success_handler(
@@ -105,9 +105,9 @@ class LiteLLMCallbackBridge:
             )
         except Exception as exc:
             _LOGGER.warning(
-                "litellm success callback payload extraction failed: %s",
-                exc,
-                exc_info=True,
+                "litellm success callback payload extraction failed "
+                "(exception_type=%s)",
+                type(exc).__name__,
             )
             return
 
@@ -116,10 +116,10 @@ class LiteLLMCallbackBridge:
                 backend.on_success(context, success)
             except Exception as exc:
                 _LOGGER.warning(
-                    "litellm success callback backend %s failed: %s",
+                    "litellm success callback backend %s failed "
+                    "(exception_type=%s)",
                     type(backend).__name__,
-                    exc,
-                    exc_info=True,
+                    type(exc).__name__,
                 )
                 continue
 
@@ -142,9 +142,9 @@ class LiteLLMCallbackBridge:
             )
         except Exception as exc:
             _LOGGER.warning(
-                "litellm failure callback payload extraction failed: %s",
-                exc,
-                exc_info=True,
+                "litellm failure callback payload extraction failed "
+                "(exception_type=%s)",
+                type(exc).__name__,
             )
             return
 
@@ -153,10 +153,10 @@ class LiteLLMCallbackBridge:
                 backend.on_error(context, error)
             except Exception as exc:
                 _LOGGER.warning(
-                    "litellm failure callback backend %s failed: %s",
+                    "litellm failure callback backend %s failed "
+                    "(exception_type=%s)",
                     type(backend).__name__,
-                    exc,
-                    exc_info=True,
+                    type(exc).__name__,
                 )
                 continue
 
