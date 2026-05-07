@@ -15,20 +15,35 @@ class ScrubbedRequest:
     sanitized_input: str
 
 
-def scrub_payload(value: Any, rule_set: ScrubRuleSet | None = None) -> Any:
+def scrub_payload(
+    value: Any,
+    rule_set: ScrubRuleSet | None = None,
+    *,
+    scrub_keys: bool = True,
+) -> Any:
     if isinstance(value, str):
         return scrub_text(value, rule_set)
     if isinstance(value, dict):
         scrubbed: dict[Any, Any] = {}
         for key, item in value.items():
-            scrubbed_key = scrub_text(key, rule_set) if isinstance(key, str) else key
+            scrubbed_key = (
+                scrub_text(key, rule_set)
+                if scrub_keys and isinstance(key, str)
+                else key
+            )
             output_key = _unique_scrubbed_key(scrubbed_key, scrubbed)
-            scrubbed[output_key] = scrub_payload(item, rule_set)
+            scrubbed[output_key] = scrub_payload(
+                item,
+                rule_set,
+                scrub_keys=scrub_keys,
+            )
         return scrubbed
     if isinstance(value, list):
-        return [scrub_payload(item, rule_set) for item in value]
+        return [scrub_payload(item, rule_set, scrub_keys=scrub_keys) for item in value]
     if isinstance(value, tuple):
-        return tuple(scrub_payload(item, rule_set) for item in value)
+        return tuple(
+            scrub_payload(item, rule_set, scrub_keys=scrub_keys) for item in value
+        )
 
     return value
 

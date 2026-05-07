@@ -127,13 +127,39 @@ def _build_default_client(host: str | None) -> Any:
 
 
 def _context_metadata(context: CallbackContext) -> dict[str, Any]:
-    return {
+    metadata = {
         "request_id": context.request_id,
         "caller_module": context.caller_module,
         "target_schema": context.target_schema,
         "provider": context.provider,
         "model": context.model,
     }
+    metadata.update(_trace_metadata(context))
+    return metadata
+
+
+def _trace_metadata(context: CallbackContext) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    if context.cycle_id:
+        metadata["cycle_id"] = context.cycle_id
+    if context.ticker:
+        metadata["ticker"] = context.ticker
+        metadata["user_id"] = context.ticker
+    if context.analyzer_type:
+        metadata["analyzer_type"] = context.analyzer_type
+    if context.regime_label:
+        metadata["regime_label"] = context.regime_label
+    if context.cycle_id and context.ticker:
+        metadata["session_id"] = f"{context.cycle_id}_{context.ticker}"
+
+    if context.analyzer_type or context.regime_label:
+        tags = [
+            tag
+            for tag in ("L6", context.analyzer_type, context.regime_label)
+            if tag
+        ]
+        metadata["tags"] = tags
+    return metadata
 
 
 def _success_metadata(success: CallbackSuccess) -> dict[str, Any]:

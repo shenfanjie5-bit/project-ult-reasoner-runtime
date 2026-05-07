@@ -20,6 +20,17 @@ class CallbackContext(BaseModel):
     target_schema: str = ""
     provider: str = ""
     model: str = ""
+    # spec v5.0.1 §14A.3: callers (main-core L6/L7) put `cycle_id`,
+    # `ticker`, `analyzer_type`, `regime_label` into ReasonerRequest.metadata
+    # so external observability backends (Langfuse / OTEL) can compose
+    # `session_id = f"{cycle_id}_{ticker}"`, `tags = ["L6", analyzer_type,
+    # regime_label]`, `user_id = ticker`. Optional default-empty so existing
+    # callers that omit them don't break — backends decide whether absence
+    # is acceptable.
+    cycle_id: str = ""
+    ticker: str = ""
+    analyzer_type: str = ""
+    regime_label: str = ""
 
 
 class CallbackSuccess(BaseModel):

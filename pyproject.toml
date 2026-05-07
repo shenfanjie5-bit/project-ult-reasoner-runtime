@@ -9,7 +9,7 @@ description = "LLM structured-output gateway with replay/scrub/health for projec
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "project-ult-contracts>=0.1.0",
+    "project-ult-contracts>=0.1.3",
     "pydantic>=2.0",
     "pyyaml>=6.0",
     "litellm==1.83.0",
@@ -23,17 +23,24 @@ dependencies = [
 dev = [
     "pytest>=8",
 ]
+# Cross-repo schema source-of-truth pin (iron rule #6). Pinned to v0.1.3
+# to match every other module's contract-lane anchor (matches the floor
+# bumped in stage 1 consistency lane on 2026-05-01). Separate extra so
+# the contract lane is the only place pulling in a git+URL dependency —
+# keeps test-fast / smoke lanes offline-first.
+contracts-schemas = [
+    "project-ult-contracts @ git+https://github.com/shenfanjie5-bit/project-ult-contracts.git@v0.1.3",
+]
 # Shared regression fixtures bundled with project-ult-audit-eval.
 # Separate extra so the regression lane is the only place pulling in a
 # git+URL dependency (codex review #3 of stage 2.1 — re-applied here).
 shared-fixtures = [
-    # Pinned to v0.2.4 (project-wide canonical_entity_id format
-    # reconciliation: every shared case now uses the runtime-aligned
-    # dot form ENT_STOCK_<symbol>.<exchange>; backward compatible with
-    # v0.2.1 real sha256 fixture hashes required by
+    # Pinned to v0.2.5 (carries forward v0.2.4 dot-form canonical_entity_id
+    # reconciliation and v0.2.1+ real sha256 fixture hashes required by
     # tests/regression/test_with_shared_fixtures.py
-    # TestReplayHashesRoundTripAgainstRuntime).
-    "project-ult-audit-eval @ git+https://github.com/shenfanjie5-bit/project-ult-audit-eval.git@v0.2.4",
+    # TestReplayHashesRoundTripAgainstRuntime; bumped 2026-05-01 stage 1
+    # consistency lane to align all 10 consumers with the audit-eval producer).
+    "project-ult-audit-eval @ git+https://github.com/shenfanjie5-bit/project-ult-audit-eval.git@v0.2.5",
 ]
 
 [tool.setuptools]
